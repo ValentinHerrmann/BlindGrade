@@ -37,8 +37,8 @@ GDPR compliance must be designed in from the start, not retrofitted. This sectio
 * Competency heatmaps (§8.4) and statistical dashboards (§8.5) must enforce a **minimum group size of k=5** before displaying aggregated results. If a group (e.g., a class, a competency tag segment) contains fewer than 5 students, the result is suppressed and replaced with a "Insufficient data for anonymized display" message.
 * In Hybrid Mode, per-student competency vectors must never be transmitted to the server; only the aggregated class-level totals (after k-anonymity check) are synced.
 
-### 2.6 Third-Party Export Legal Basis (CSV/XLSX to Administration Software)
-* The CSV/XLSX export to school administration software (e.g., Notenmanager) decrypts PII client-side and writes it to a file. This action must:
+### 2.6 Third-Party Export Legal Basis (CSV to Administration Software)
+* The CSV export to school administration software (e.g., Notenmanager) decrypts PII client-side and writes it to a file. This action must:
   1. Require explicit confirmation from the teacher ("I confirm I am authorized to export this data to [system name]").
   2. Display a warning that the exported file is plaintext and must be handled according to the school's data protection policy.
   3. Never be transmitted automatically; the export file is created locally only.
@@ -209,7 +209,7 @@ High-resolution scans of a full class (e.g., 30 students × 10 pages at 300 DPI)
 * **Competency Tagging (Didactic Analytics):** Individual exercises are tagged with curriculum competencies (e.g., "Syntax," "Algorithmic Logic"). The client-side analytics engine aggregates these tags to generate heatmaps, showing which concepts a class has mastered and which need review. Minimum group size k=5 is enforced before display (§2.5).
 
 ### 8.5 Grade Export & Administration Sync
-* **System Integration:** Once grading is complete and identities are locally decrypted, the frontend provides a CSV/XLSX export formatted for school administration software (e.g., Notenmanager), subject to the authorization requirements in §2.6.
+* **System Integration:** Once grading is complete and identities are locally decrypted, the frontend provides a CSV export formatted for school administration software (e.g., Notenmanager), subject to the authorization requirements in §2.6.
 * **Statistical Dashboards:** Automated generation of class histograms, standard deviations, and average scores. In Hybrid Mode, only plaintext point totals (no PII, no pseudonym IDs) are synchronized with the server for longitudinal tracking. k-anonymity thresholds are enforced on all displayed aggregates.
 
 ---
