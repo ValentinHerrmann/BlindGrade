@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+jobs:
+  backend:
+    name: Backend — lint, typecheck, test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: blindgrade
+          POSTGRES_PASSWORD: blindgrade
+          POSTGRES_DB: blindgrade_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U blindgrade"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: pip install uv
+      - name: Install deps
+        run: cd backend && uv pip install --system -e ".[dev]"
+      - name: Ruff lint
+        run: cd backend && ruff check app
+      - name: Mypy
+        run: cd backend && mypy app
+      - name: Pytest
+        env:
+          DATABASE_URL: postgresql+asyncpg://blindgrade:blindgrade@localhost:5432/blindgrade_test
+          REDIS_URL: redis://localhost:6379/0
+          SECRET_KEY: test-secret-key-not-for-production
+          CORS_ALLOWED_ORIGINS: '["http://localhost:5173"]'
+        run: cd backend && pytest --cov=app --cov-report=xml
+      - name: pip-audit (fail on HIGH CVEs)
+        run: pip install pip-audit && pip-audit -r backend/pyproject.toml --severity high
+
+  frontend:
+    name: Frontend — lint, typecheck, unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package.json
+      - name: Install deps
+        run: cd frontend && npm ci
+      - name: ESLint
+        run: cd frontend && npm run lint
+      - name: TypeScript check
+        run: cd frontend && npm run check
+      - name: Vitest
+        run: cd frontend && npm run test:unit
+      - name: npm audit (fail on HIGH)
+        run: cd frontend && npm audit --audit-level=high
+      - name: SRI verification
+        run: cd frontend && npm run sri:verify

@@ -1,0 +1,10 @@
+{
+  "wasm": {
+    "argon2-browser@1.18.0": "sha256-PLACEHOLDER_FILL_AFTER_VENDORING",
+    "opencv.js@4.10.0": "sha256-PLACEHOLDER_FILL_AFTER_VENDORING",
+    "zxing-wasm@1.2.3": "sha256-PLACEHOLDER_FILL_AFTER_VENDORING"
+  },
+  "js": {
+    "fflate@0.8.2": "sha384-PLACEHOLDER_FILL_AFTER_BUILD"
+  }
+}
