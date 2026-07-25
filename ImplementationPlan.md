@@ -553,21 +553,21 @@ type WorkerResponse =
 **Goal:** Key derivation, session lifecycle, server auth with httpOnly cookies, IndexedDB hygiene, CSP, CORS. No UI beyond unlock screen.
 
 ### Backend tasks
-- [ ] Scaffold FastAPI app (`app/main.py`, `config.py`, `database.py`)
-- [ ] Implement `Teacher` model + `InviteToken` model + Alembic migration zero (all tables)
-- [ ] `cli.py`: management command `create-invite` — generates a random token, stores `SHA-256(token)` in `InviteToken` table, prints the raw token for the admin to share
-- [ ] `POST /auth/register` — requires `invite_token` in body; validates against `InviteToken` table (not expired, not used); on success creates teacher + marks token as used
-- [ ] `POST /auth/login` — verifies credentials with Argon2id; sets `access_token` (15-min, httpOnly, Secure, SameSite=Strict) + `refresh_token` (7-day, httpOnly, Secure, SameSite=Strict, Path=/api/v1/auth/refresh) cookies; response body contains only `{ email, role }`
-- [ ] `POST /auth/refresh` — reads refresh cookie, validates, issues new access + refresh cookies, revokes old refresh token (store revocation in DB or Redis)
-- [ ] `POST /auth/logout` — clears both cookies, revokes refresh token
-- [ ] JWT signing with `PyJWT`: `jwt.encode(payload, secret, algorithm="HS256")`, `jwt.decode(token, secret, algorithms=["HS256"])` — explicit algorithm pinning prevents algorithm confusion
-- [ ] Auth dependency: read access token from cookie (not header), decode, verify expiry, return teacher
-- [ ] Ownership check dependency: `get_current_teacher_and_verify_ownership(exam_id)`
-- [ ] `AuditLog` model (teacher_id nullable FK, teacher_email immutable string) + `audit.write()` helper; wire LOGIN action
-- [ ] CSP middleware (`csp.py`): `script-src 'self'; connect-src 'self' [backend-origin]; worker-src 'self'; style-src 'self' 'unsafe-inline'`
-- [ ] CORS middleware (`cors.py`): explicit `CORS_ALLOWED_ORIGINS` from config, `allow_credentials=True`, refuse startup if unset
-- [ ] Body size middleware (`body_limit.py`): per-route size limits (§5)
-- [ ] Dockerfile + docker-compose (postgres, backend, volumes)
+- [x] Scaffold FastAPI app (`app/main.py`, `config.py`, `database.py`)
+- [x] Implement `Teacher` model + `InviteToken` model + Alembic migration zero (all tables)
+- [x] `cli.py`: management command `create-invite` — generates a random token, stores `SHA-256(token)` in `InviteToken` table, prints the raw token for the admin to share
+- [x] `POST /auth/register` — requires `invite_token` in body; validates against `InviteToken` table (not expired, not used); on success creates teacher + marks token as used
+- [x] `POST /auth/login` — verifies credentials with Argon2id; sets `access_token` (15-min, httpOnly, Secure, SameSite=Strict) + `refresh_token` (7-day, httpOnly, Secure, SameSite=Strict, Path=/api/v1/auth/refresh) cookies; response body contains only `{ email, role }`
+- [x] `POST /auth/refresh` — reads refresh cookie, validates, issues new access + refresh cookies, revokes old refresh token (store revocation in DB or Redis)
+- [x] `POST /auth/logout` — clears both cookies, revokes refresh token
+- [x] JWT signing with `PyJWT`: `jwt.encode(payload, secret, algorithm="HS256")`, `jwt.decode(token, secret, algorithms=["HS256"])` — explicit algorithm pinning prevents algorithm confusion
+- [x] Auth dependency: read access token from cookie (not header), decode, verify expiry, return teacher
+- [x] Ownership check dependency: `get_current_teacher_and_verify_ownership(exam_id)`
+- [x] `AuditLog` model (teacher_id nullable FK, teacher_email immutable string) + `audit.write()` helper; wire LOGIN action
+- [x] CSP middleware (`csp.py`): `script-src 'self'; connect-src 'self' [backend-origin]; worker-src 'self'; style-src 'self' 'unsafe-inline'`
+- [x] CORS middleware (`cors.py`): explicit `CORS_ALLOWED_ORIGINS` from config, `allow_credentials=True`, refuse startup if unset
+- [x] Body size middleware (`body_limit.py`): per-route size limits (§5)
+- [x] Dockerfile + docker-compose (postgres, backend, volumes)
 
 ### Frontend tasks
 - [ ] SvelteKit project init with TypeScript, Vite, static adapter
