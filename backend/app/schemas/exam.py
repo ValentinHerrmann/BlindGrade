@@ -92,3 +92,15 @@ class ExamResponse(BaseModel):
     lehrernachname: str | None = None
     info_text: str | None = None
     exercises: list[ExerciseResponse] = []
+
+
+class ExamUsageItem(BaseModel):
+    id: uuid.UUID
+    title: str
+    datum: str | None = None
+
+
+class ExerciseUsageResponse(BaseModel):
+    exam_count: int
+    exams: list[ExamUsageItem] = []
+

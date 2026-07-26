@@ -8,6 +8,7 @@
   import { api } from "$lib/api/client";
   import { parseExerciseScore } from "$lib/latex/scoreParser";
   import { get } from "svelte/store";
+  import LatexEditor from "$lib/components/LatexEditor.svelte";
 
   // Metadata
   let title = "";
@@ -493,12 +494,7 @@ ${exerciseInputs}
             <label for="customBody"
               >LaTeX Body (\\begin&#123;Aufgabe&#125;...)</label
             >
-            <textarea
-              id="customBody"
-              rows="6"
-              class="code-editor"
-              bind:value={customLatexBody}
-            ></textarea>
+            <LatexEditor bind:value={customLatexBody} rows={6} />
           </div>
 
           <div class="custom-actions">

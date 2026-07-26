@@ -60,11 +60,6 @@
     await exportGradesToCsv(examId, exam?.title || 'Exam', rows);
   }
 </script>
-    });
-
-    await exportGradesToCsv(examId, exam?.title || 'Exam', rows);
-  }
-</script>
 
 <div class="stats-page">
   <h2>Class Grade Analytics & Export</h2>

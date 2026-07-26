@@ -9,6 +9,8 @@
   import { parseExerciseScore } from "$lib/latex/scoreParser";
   import { syncLocalDataToServer } from "$lib/services/migrationService";
   import { get } from "svelte/store";
+  import LatexEditor from "$lib/components/LatexEditor.svelte";
+  import { diffLines } from "diff";
 
   let exercises: ExerciseRecord[] = [];
   let selectedTopic: string = "ALL";
@@ -21,9 +23,30 @@
   // Editor modal state
   let isEditorOpen = false;
   let editingId: string | null = null;
+  let isCreatingVersion = false;
+  let versionBaseEx: ExerciseRecord | null = null;
   let editorName = "";
   let editorTopicTag = "_General";
   let editorLatexBody = "";
+
+  // Delete modal state
+  let isDeleteModalOpen = false;
+  let deletingExercise: ExerciseRecord | null = null;
+  let deleteUsageInfo: { examCount: number; exams: { id: string; title: string; datum: string | null }[] } | null = null;
+  let isDeleteLoading = false;
+
+  // Diff modal state
+  let isDiffModalOpen = false;
+  let diffLeftId: string = "";
+  let diffRightId: string = "";
+  let diffGroupExercises: ExerciseRecord[] = [];
+
+  $: diffLeftEx = exercises.find((e) => e.id === diffLeftId) || diffGroupExercises.find((e) => e.id === diffLeftId);
+  $: diffRightEx = exercises.find((e) => e.id === diffRightId) || diffGroupExercises.find((e) => e.id === diffRightId);
+
+  $: diffResult = (diffLeftEx && diffRightEx)
+    ? diffLines(diffLeftEx.latexBody || "", diffRightEx.latexBody || "")
+    : [];
 
   // Preview state
   let isPreviewLoading = false;
@@ -69,6 +92,8 @@
             version: e.version || 1,
             questionType: e.question_type || "free_text",
             penalty: e.penalty || 0,
+            exerciseGroupId: e.exercise_group_id || undefined,
+            variantKey: e.variant_key || undefined,
           }));
           const encryptedExs = await Promise.all(exercises.map(ex => encryptExercise(ex, key)));
           await db.exercises.bulkPut(encryptedExs);
@@ -107,6 +132,8 @@
 
   function openCreateModal() {
     editingId = null;
+    isCreatingVersion = false;
+    versionBaseEx = null;
     editorName = "New_Exercise";
     editorTopicTag = "_General";
     editorLatexBody = `\\begin{Aufgabe}{Neue Aufgabe}
@@ -119,6 +146,20 @@ Frage hier eingeben... \\BE
 
   function openEditModal(ex: ExerciseRecord) {
     editingId = ex.id;
+    isCreatingVersion = false;
+    versionBaseEx = null;
+    editorName = ex.name || "Untitled";
+    editorTopicTag = ex.topicTag || "_General";
+    editorLatexBody = ex.latexBody || "";
+    if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
+    previewPdfUrl = null;
+    isEditorOpen = true;
+  }
+
+  function openNewVersionModal(ex: ExerciseRecord) {
+    editingId = null;
+    isCreatingVersion = true;
+    versionBaseEx = ex;
     editorName = ex.name || "Untitled";
     editorTopicTag = ex.topicTag || "_General";
     editorLatexBody = ex.latexBody || "";
@@ -129,6 +170,8 @@ Frage hier eingeben... \\BE
 
   function closeEditor() {
     isEditorOpen = false;
+    isCreatingVersion = false;
+    versionBaseEx = null;
     if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
     previewPdfUrl = null;
   }
@@ -173,6 +216,45 @@ ${editorLatexBody}
   async function handleSaveExercise() {
     if (!editorName.trim()) {
       alert("Exercise name is required.");
+      return;
+    }
+
+    if (isCreatingVersion && versionBaseEx) {
+      try {
+        if ($storagePolicyStore === "server-synced") {
+          await api.post(`/exercises/${versionBaseEx.id}/new-version`, {
+            name: editorName,
+            topic_tag: editorTopicTag,
+            latex_body: editorLatexBody,
+          });
+        } else {
+          const groupId = versionBaseEx.exerciseGroupId || crypto.randomUUID();
+          if (!versionBaseEx.exerciseGroupId) {
+            versionBaseEx.exerciseGroupId = groupId;
+            await db.exercises.put(versionBaseEx);
+          }
+          const newRecord: ExerciseRecord = {
+            ...versionBaseEx,
+            id: crypto.randomUUID(),
+            name: editorName,
+            topicTag: editorTopicTag,
+            latexBody: editorLatexBody,
+            maxPoints: parseExerciseScore(editorLatexBody),
+            version: (versionBaseEx.version || 1) + 1,
+            exerciseGroupId: groupId,
+            isCurrent: true,
+            updatedAt: new Date().toISOString(),
+          };
+          await db.exercises.put({ ...versionBaseEx, isCurrent: false });
+          await db.exercises.put(newRecord);
+        }
+
+        await loadExercises();
+        closeEditor();
+        alert(`Created new version v${(versionBaseEx.version || 1) + 1}.`);
+      } catch (err: any) {
+        alert(`Failed to create new version: ${err.message}`);
+      }
       return;
     }
 
@@ -232,38 +314,102 @@ ${editorLatexBody}
   let variantTopicTag = "_Vererbung";
   let variantLatexBody = "";
 
-  async function handleCreateNewVersion(ex: ExerciseRecord) {
-    if (
-      !confirm(
-        `Create new corrected version (v${(ex.version || 1) + 1}) of "${ex.name}"? Previous version will be archived for statistics.`,
-      )
-    )
-      return;
+  async function openDeleteModal(ex: ExerciseRecord) {
+    deletingExercise = ex;
+    deleteUsageInfo = null;
+    isDeleteLoading = true;
+    isDeleteModalOpen = true;
 
+    if ($storagePolicyStore === "server-synced") {
+      try {
+        const usage = (await api.get(`/exercises/${ex.id}/usage`)) as any;
+        deleteUsageInfo = {
+          examCount: usage.exam_count,
+          exams: usage.exams,
+        };
+      } catch (err) {
+        console.warn("Failed to check exercise usage:", err);
+        deleteUsageInfo = { examCount: 0, exams: [] };
+      }
+    } else {
+      deleteUsageInfo = { examCount: 0, exams: [] };
+    }
+    isDeleteLoading = false;
+  }
+
+  async function handleConfirmDelete() {
+    if (!deletingExercise) return;
     try {
       if ($storagePolicyStore === "server-synced") {
-        await api.post(`/exercises/${ex.id}/new-version`, {
-          name: ex.name,
-          topic_tag: ex.topicTag,
-          latex_body: ex.latexBody,
-        });
-      } else {
-        const newRecord: ExerciseRecord = {
-          ...ex,
-          id: crypto.randomUUID(),
-          version: (ex.version || 1) + 1,
-          isCurrent: true,
-          updatedAt: new Date().toISOString(),
-        };
-        await db.exercises.put({ ...ex, isCurrent: false });
-        await db.exercises.put(newRecord);
+        await api.delete(`/exercises/${deletingExercise.id}`);
       }
-
+      await db.exercises.delete(deletingExercise.id);
       await loadExercises();
-      alert(`Created new version v${(ex.version || 1) + 1}.`);
+      isDeleteModalOpen = false;
+      deletingExercise = null;
     } catch (err: any) {
-      alert(`Failed to create new version: ${err.message}`);
+      alert(`Failed to delete exercise: ${err.message}`);
     }
+  }
+
+  async function openDiffModal(ex: ExerciseRecord) {
+    let groupExs: ExerciseRecord[] = [];
+    const key = get(sessionStore).sessionKey;
+
+    if ($storagePolicyStore === "server-synced") {
+      try {
+        if (ex.exerciseGroupId) {
+          const remoteExs = (await api.get(`/exercises?group_id=${ex.exerciseGroupId}&current_only=false`)) as any[];
+          groupExs = remoteExs.map((e: any) => ({
+            id: e.id,
+            teacherId: e.teacher_id,
+            name: e.name,
+            topicTag: e.topic_tag,
+            latexBody: e.latex_body,
+            maxPoints: e.max_points,
+            version: e.version || 1,
+            questionType: e.question_type || "free_text",
+            penalty: e.penalty || 0,
+            exerciseGroupId: e.exercise_group_id || undefined,
+            variantKey: e.variant_key || undefined,
+            isCurrent: e.is_current,
+          }));
+        }
+      } catch (err) {
+        console.warn("Failed to fetch group exercises for diff:", err);
+      }
+    }
+
+    if (groupExs.length === 0) {
+      try {
+        const allLocal = await loadExercisesEncrypted(key);
+        if (ex.exerciseGroupId) {
+          groupExs = allLocal.filter((e) => e.exerciseGroupId === ex.exerciseGroupId);
+        }
+        if (groupExs.length === 0) {
+          groupExs = allLocal.filter((e) => (e.name && ex.name && e.name === ex.name) || e.id === ex.id);
+        }
+      } catch (err) {
+        console.warn("Failed to load local exercises for diff:", err);
+      }
+    }
+
+    if (groupExs.length === 0) {
+      groupExs = [ex];
+    }
+
+    groupExs.sort((a, b) => {
+      const vA = a.variantKey || "";
+      const vB = b.variantKey || "";
+      if (vA !== vB) return vA.localeCompare(vB);
+      return (a.version || 1) - (b.version || 1);
+    });
+
+    diffGroupExercises = groupExs;
+    diffLeftId = ex.id;
+    const other = diffGroupExercises.find((e) => e.id !== ex.id) || diffGroupExercises[0];
+    diffRightId = other.id;
+    isDiffModalOpen = true;
   }
 
   function openVariantModal(ex: ExerciseRecord) {
@@ -291,6 +437,11 @@ ${editorLatexBody}
           variant_key: variantKey,
         });
       } else {
+        const groupId = variantBaseEx.exerciseGroupId || crypto.randomUUID();
+        if (!variantBaseEx.exerciseGroupId) {
+          variantBaseEx.exerciseGroupId = groupId;
+          await db.exercises.put(variantBaseEx);
+        }
         const variantRecord: ExerciseRecord = {
           id: crypto.randomUUID(),
           teacherId: $sessionStore.email || "local-teacher",
@@ -299,7 +450,7 @@ ${editorLatexBody}
           latexBody: variantLatexBody,
           maxPoints: parseExerciseScore(variantLatexBody),
           version: 1,
-          exerciseGroupId: variantBaseEx.exerciseGroupId || crypto.randomUUID(),
+          exerciseGroupId: groupId,
           variantKey: variantKey,
           isCurrent: true,
           questionType: "free_text",
@@ -415,16 +566,63 @@ ${editorLatexBody}
           <div class="card-actions">
             <button
               class="action-btn edit-btn"
-              on:click={() => openEditModal(ex)}>Edit</button
+              title="Edit exercise"
+              on:click={() => openEditModal(ex)}
             >
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+              </svg>
+              <span>Edit</span>
+            </button>
             <button
               class="action-btn version-btn"
-              on:click={() => handleCreateNewVersion(ex)}>+ Version</button
+              title="Create new version"
+              on:click={() => openNewVersionModal(ex)}
             >
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <line x1="12" y1="18" x2="12" y2="12"></line>
+                <line x1="9" y1="15" x2="15" y2="15"></line>
+              </svg>
+              <span>+Ver</span>
+            </button>
             <button
               class="action-btn variant-btn"
-              on:click={() => openVariantModal(ex)}>+ Variant</button
+              title="Create parallel variant"
+              on:click={() => openVariantModal(ex)}
             >
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="7" height="7" rx="1"></rect>
+                <rect x="14" y="3" width="7" height="7" rx="1"></rect>
+                <rect x="14" y="14" width="7" height="7" rx="1"></rect>
+                <path d="M6 10v7a2 2 0 0 0 2 2h6"></path>
+              </svg>
+              <span>+Var</span>
+            </button>
+            <button
+              class="action-btn diff-btn"
+              title="Compare LaTeX diff"
+              on:click={() => openDiffModal(ex)}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M16 3h5v5"></path>
+                <path d="M8 21H3v-5"></path>
+                <path d="M21 3L14 10"></path>
+                <path d="M3 21l7-7"></path>
+              </svg>
+              <span>Diff</span>
+            </button>
+            <button
+              class="action-btn delete-btn"
+              title="Delete exercise"
+              on:click={() => openDeleteModal(ex)}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              </svg>
+            </button>
           </div>
         </div>
       {/each}
@@ -492,12 +690,7 @@ ${editorLatexBody}
           <label for="variantBody"
             >LaTeX Body (\\begin&#123;Aufgabe&#125;...)</label
           >
-          <textarea
-            id="variantBody"
-            rows="8"
-            class="code-editor"
-            bind:value={variantLatexBody}
-          ></textarea>
+          <LatexEditor bind:value={variantLatexBody} rows={8} />
         </div>
       </div>
 
@@ -524,12 +717,20 @@ ${editorLatexBody}
     <div class="modal-content">
       <div class="modal-header">
         <h3>
-          {editingId ? `Edit Exercise: ${editorName}` : "Create New Exercise"}
+          {isCreatingVersion
+            ? `New Version: ${editorName}`
+            : editingId
+              ? `Edit Exercise: ${editorName}`
+              : "Create New Exercise"}
         </h3>
         <button class="close-btn" on:click={closeEditor}>✕</button>
       </div>
 
-      {#if editingId}
+      {#if isCreatingVersion}
+        <div class="live-notice">
+          ℹ️ Creating new version v{(versionBaseEx?.version || 1) + 1}. The previous version will be preserved.
+        </div>
+      {:else if editingId}
         <div class="live-notice">
           ℹ️ Editing this exercise will live-update all exams that reference it.
         </div>
@@ -570,12 +771,7 @@ ${editorLatexBody}
               >
             </span>
           </div>
-          <textarea
-            id="editorBody"
-            rows="10"
-            class="code-editor"
-            bind:value={editorLatexBody}
-          ></textarea>
+          <LatexEditor bind:value={editorLatexBody} rows={10} />
         </div>
 
         <div class="editor-actions-row">
@@ -605,8 +801,121 @@ ${editorLatexBody}
       <div class="modal-footer">
         <button class="cancel-btn" on:click={closeEditor}>Cancel</button>
         <button class="save-btn" on:click={handleSaveExercise}
-          >Save Exercise</button
+          >{isCreatingVersion ? "Save New Version" : "Save Exercise"}</button
         >
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if isDeleteModalOpen && deletingExercise}
+  <div
+    class="modal-backdrop"
+    role="button"
+    tabindex="-1"
+    on:click|self={() => (isDeleteModalOpen = false)}
+    on:keydown|self={(e) => e.key === "Escape" && (isDeleteModalOpen = false)}
+  >
+    <div class="modal-content small-modal">
+      <div class="modal-header">
+        <h3>Delete Exercise: {deletingExercise.name || "Untitled"}</h3>
+        <button class="close-btn" on:click={() => (isDeleteModalOpen = false)}>✕</button>
+      </div>
+
+      <div class="modal-body">
+        {#if isDeleteLoading}
+          <p>Checking exercise usage in exams...</p>
+        {:else if deleteUsageInfo && deleteUsageInfo.examCount > 0}
+          <div class="warning-box">
+            <h4>⚠️ Warning: Exercise in Use</h4>
+            <p>
+              This exercise is currently referenced in <strong>{deleteUsageInfo.examCount}</strong> exam(s):
+            </p>
+            <ul class="exam-list">
+              {#each deleteUsageInfo.exams as exam}
+                <li>
+                  <strong>{exam.title}</strong>
+                  {#if exam.datum}<span class="exam-date">({exam.datum})</span>{/if}
+                </li>
+              {/each}
+            </ul>
+            <p class="warning-note">
+              Deleting it will permanently remove it from the library and unlink it from these exams.
+            </p>
+          </div>
+        {:else}
+          <p>Are you sure you want to delete this exercise from your library?</p>
+        {/if}
+      </div>
+
+      <div class="modal-footer">
+        <button class="cancel-btn" on:click={() => (isDeleteModalOpen = false)}>Cancel</button>
+        <button class="delete-confirm-btn" on:click={handleConfirmDelete} disabled={isDeleteLoading}>
+          Delete Anyway
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if isDiffModalOpen}
+  <div
+    class="modal-backdrop"
+    role="button"
+    tabindex="-1"
+    on:click|self={() => (isDiffModalOpen = false)}
+    on:keydown|self={(e) => e.key === "Escape" && (isDiffModalOpen = false)}
+  >
+    <div class="modal-content large-modal">
+      <div class="modal-header">
+        <h3>Exercise LaTeX Code Diff Comparison</h3>
+        <button class="close-btn" on:click={() => (isDiffModalOpen = false)}>✕</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="diff-selectors">
+          <div class="diff-select-group">
+            <label for="diffLeftSelect">Base / Left Version:</label>
+            <select id="diffLeftSelect" bind:value={diffLeftId}>
+              {#each diffGroupExercises as ex}
+                <option value={ex.id}>
+                  {ex.name} (v{ex.version || 1}{ex.variantKey ? `, Variant: ${ex.variantKey}` : ""})
+                </option>
+              {/each}
+            </select>
+          </div>
+
+          <div class="diff-select-group">
+            <label for="diffRightSelect">Compared / Right Version:</label>
+            <select id="diffRightSelect" bind:value={diffRightId}>
+              {#each diffGroupExercises as ex}
+                <option value={ex.id}>
+                  {ex.name} (v{ex.version || 1}{ex.variantKey ? `, Variant: ${ex.variantKey}` : ""})
+                </option>
+              {/each}
+            </select>
+          </div>
+        </div>
+
+        <div class="diff-panes">
+          <div class="diff-pane">
+            <h4>Left: {diffLeftEx?.name || "Original"} (v{diffLeftEx?.version || 1})</h4>
+            <LatexEditor value={diffLeftEx?.latexBody || ""} readonly={true} rows={8} />
+          </div>
+          <div class="diff-pane">
+            <h4>Right: {diffRightEx?.name || "Compared"} (v{diffRightEx?.version || 1})</h4>
+            <LatexEditor value={diffRightEx?.latexBody || ""} readonly={true} rows={8} />
+          </div>
+        </div>
+
+        <div class="unified-diff-box">
+          <h4>Line-by-Line Unified Diff</h4>
+          <pre class="diff-code">{#each diffResult as part}<span class={part.added ? "diff-added" : part.removed ? "diff-removed" : "diff-unchanged"}>{part.value}</span>{/each}</pre>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="cancel-btn" on:click={() => (isDiffModalOpen = false)}>Close</button>
       </div>
     </div>
   </div>
@@ -743,6 +1052,18 @@ ${editorLatexBody}
     border-radius: 4px;
   }
 
+  .exercise-card {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 10px;
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    box-sizing: border-box;
+    overflow: hidden;
+  }
+
   .snippet-preview {
     background: #0f172a;
     padding: 0.75rem;
@@ -756,17 +1077,31 @@ ${editorLatexBody}
 
   .card-actions {
     display: flex;
-    gap: 0.5rem;
+    flex-wrap: wrap;
+    gap: 0.375rem;
     justify-content: flex-end;
+    align-items: center;
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .action-btn {
-    padding: 0.375rem 0.75rem;
-    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.375rem 0.55rem;
+    border-radius: 6px;
     border: none;
     cursor: pointer;
-    font-size: 0.85rem;
+    font-size: 0.775rem;
     font-weight: 600;
+    white-space: nowrap;
+    line-height: 1;
+    transition: background 0.15s ease, opacity 0.15s ease;
+  }
+
+  .action-btn svg {
+    flex-shrink: 0;
   }
 
   .edit-btn {
@@ -956,6 +1291,139 @@ ${editorLatexBody}
   .variant-btn {
     background: #4c1d95;
     color: #ddd6fe;
+  }
+
+  .diff-btn {
+    background: #1e3a8a;
+    color: #93c5fd;
+  }
+
+  .delete-confirm-btn {
+    background: #dc2626;
+    color: white;
+    border: none;
+    padding: 0.625rem 1.25rem;
+    border-radius: 6px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .delete-confirm-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .small-modal {
+    max-width: 500px;
+  }
+
+  .large-modal {
+    max-width: 1000px;
+    max-height: 95vh;
+  }
+
+  .warning-box {
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid #ef4444;
+    border-radius: 8px;
+    padding: 1rem;
+    color: #fca5a5;
+  }
+
+  .warning-box h4 {
+    margin: 0 0 0.5rem 0;
+    color: #f87171;
+  }
+
+  .exam-list {
+    margin: 0.5rem 0;
+    padding-left: 1.5rem;
+    color: #e2e8f0;
+  }
+
+  .exam-date {
+    color: #94a3b8;
+    font-size: 0.85rem;
+    margin-left: 0.35rem;
+  }
+
+  .warning-note {
+    font-size: 0.85rem;
+    margin-top: 0.75rem;
+    color: #cbd5e1;
+  }
+
+  .diff-selectors {
+    display: flex;
+    gap: 1.5rem;
+    margin-bottom: 1.5rem;
+    background: #0f172a;
+    padding: 1rem;
+    border-radius: 8px;
+  }
+
+  .diff-select-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    flex: 1;
+  }
+
+  .diff-select-group select {
+    padding: 0.5rem;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    color: white;
+  }
+
+  .diff-panes {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .diff-pane h4 {
+    margin: 0 0 0.5rem 0;
+    color: #38bdf8;
+    font-size: 0.9rem;
+  }
+
+  .unified-diff-box {
+    background: #0f172a;
+    padding: 1rem;
+    border-radius: 8px;
+    border: 1px solid #334155;
+  }
+
+  .unified-diff-box h4 {
+    margin: 0 0 0.5rem 0;
+    color: #38bdf8;
+  }
+
+  .diff-code {
+    font-family: "Fira Code", monospace;
+    font-size: 0.85rem;
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 250px;
+    overflow-y: auto;
+  }
+
+  .diff-added {
+    background: rgba(34, 197, 94, 0.25);
+    color: #86efac;
+  }
+
+  .diff-removed {
+    background: rgba(239, 68, 68, 0.25);
+    color: #fca5a5;
+  }
+
+  .diff-unchanged {
+    color: #94a3b8;
   }
 
   .desc-text {

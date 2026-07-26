@@ -11,8 +11,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.dependencies import get_current_teacher
 from app.models.exercise import Exercise
+from app.models.exam import Exam
+from app.models.exam_exercise import ExamExercise
 from app.models.teacher import Teacher
-from app.schemas.exam import ExerciseCreate, ExerciseResponse, ExerciseUpdate
+from app.schemas.exam import (
+    ExamUsageItem,
+    ExerciseCreate,
+    ExerciseResponse,
+    ExerciseUpdate,
+    ExerciseUsageResponse,
+)
 
 from app.models.exercise_group import ExerciseGroup
 
@@ -200,6 +208,18 @@ async def create_new_version(
     # Mark old version as not current
     old_ex.is_current = False
 
+    group_id = old_ex.exercise_group_id
+    if not group_id:
+        group = ExerciseGroup(
+            teacher_id=teacher.id,
+            name=old_ex.name or "Untitled Group",
+            topic_tag=old_ex.topic_tag,
+        )
+        db.add(group)
+        await db.flush()
+        group_id = group.id
+        old_ex.exercise_group_id = group_id
+
     new_latex = body.latex_body if body.latex_body is not None else old_ex.latex_body
     computed_score = parse_exercise_score(new_latex) if new_latex else old_ex.max_points
 
@@ -210,7 +230,7 @@ async def create_new_version(
         latex_body=new_latex,
         max_points=computed_score,
         version=old_ex.version + 1,
-        exercise_group_id=body.exercise_group_id or old_ex.exercise_group_id,
+        exercise_group_id=group_id,
         variant_key=body.variant_key or old_ex.variant_key,
         is_current=True,
         question_type=old_ex.question_type,
@@ -270,6 +290,49 @@ async def create_new_variant(
     return _to_res(variant_ex)
 
 
+@router.get("/{exercise_id}/usage", response_model=ExerciseUsageResponse)
+async def get_exercise_usage(
+    exercise_id: uuid.UUID,
+    teacher: Teacher = Depends(get_current_teacher),
+    db: AsyncSession = Depends(get_db),
+) -> ExerciseUsageResponse:
+    """Get count and details of non-deleted exams referencing this exercise."""
+    ex_res = await db.execute(select(Exercise).where(Exercise.id == exercise_id))
+    ex = ex_res.scalar_one_or_none()
+    if not ex:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exercise not found")
+
+    query = (
+        select(Exam)
+        .join(ExamExercise, ExamExercise.exam_id == Exam.id)
+        .where(
+            ExamExercise.exercise_id == exercise_id,
+            Exam.deleted_at.is_(None),
+            Exam.teacher_id == teacher.id,
+        )
+    )
+    res = await db.execute(query)
+    exams = list(res.scalars().all())
+
+    if ex.exam_id and not any(e.id == ex.exam_id for e in exams):
+        legacy_res = await db.execute(
+            select(Exam).where(
+                Exam.id == ex.exam_id,
+                Exam.deleted_at.is_(None),
+                Exam.teacher_id == teacher.id,
+            )
+        )
+        legacy_exam = legacy_res.scalar_one_or_none()
+        if legacy_exam:
+            exams.append(legacy_exam)
+
+    usage_items = [
+        ExamUsageItem(id=exam.id, title=exam.title, datum=exam.datum)
+        for exam in exams
+    ]
+    return ExerciseUsageResponse(exam_count=len(usage_items), exams=usage_items)
+
+
 @router.delete("/{exercise_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_exercise(
     exercise_id: uuid.UUID,
@@ -281,3 +344,4 @@ async def delete_exercise(
     ex = result.scalar_one_or_none()
     if ex:
         await db.delete(ex)
+

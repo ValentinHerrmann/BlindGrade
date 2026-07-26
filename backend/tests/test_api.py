@@ -256,6 +256,37 @@ async def test_exercise_versions_and_variants(client: AsyncClient, db: AsyncSess
     assert variant_ex["variant_key"] == "Fahrzeug"
     assert variant_ex["exercise_group_id"] == ex1["exercise_group_id"]
 
+    # Check usage (should be 0 exams initially)
+    usage_res = await client.get(f"/api/v1/exercises/{ex1_id}/usage")
+    assert usage_res.status_code == 200
+    assert usage_res.json()["exam_count"] == 0
+
+    # Link exercise to an exam
+    retention_date = (date.today() + timedelta(days=365)).isoformat()
+    exam_res = await client.post(
+        "/api/v1/exams",
+        json={
+            "title": "Exam with exercise",
+            "retention_until": retention_date,
+            "exercise_ids": [ex1_id],
+        },
+    )
+    assert exam_res.status_code == 201
+
+    # Check usage now (should be 1 exam)
+    usage_res2 = await client.get(f"/api/v1/exercises/{ex1_id}/usage")
+    assert usage_res2.status_code == 200
+    assert usage_res2.json()["exam_count"] == 1
+    assert usage_res2.json()["exams"][0]["title"] == "Exam with exercise"
+
+    # Delete exercise
+    del_res = await client.delete(f"/api/v1/exercises/{ex1_id}")
+    assert del_res.status_code == 204
+
+    # Get exercise should return 404
+    get_res = await client.get(f"/api/v1/exercises/{ex1_id}")
+    assert get_res.status_code == 404
+
 
 @pytest.mark.asyncio
 async def test_compile_endpoint_requires_auth(client: AsyncClient, db: AsyncSession) -> None:
