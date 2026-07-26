@@ -9,8 +9,15 @@
   import { encrypt } from "$lib/crypto/aesGcm";
   import { sessionStore } from "$lib/stores/session";
   import { storagePolicyStore } from "$lib/stores/storagePolicy";
+  import {
+    loadStudentsEncrypted,
+    saveStudentEncrypted,
+    saveSubmissionEncrypted,
+    decryptStudent,
+  } from "$lib/db/dbEncryption";
   import { api } from "$lib/api/client";
   import { onMount } from "svelte";
+  import { get } from "svelte/store";
   import { WorkerPool } from "$lib/workers/pool";
   import { browser } from "$app/environment";
   import type {
@@ -67,16 +74,17 @@
   });
 
   async function refreshUnmatched() {
-    const students = await db.students.where("examId").equals(examId).toArray();
+    const key = get(sessionStore).sessionKey;
+    const rawStudents = await db.students.where("examId").equals(examId).toArray();
+    const students = await Promise.all(rawStudents.map(s => decryptStudent(s, key)));
     const unmatched = students.filter((s) =>
-      s.fallbackCode.startsWith("UNMATCHED-"),
+      s.fallbackCode && s.fallbackCode.startsWith("UNMATCHED-"),
     );
     unmatchedList = unmatched.map((s) => {
-      const sub = db.submissions.where("examId").equals(examId).toArray();
       return {
         submissionId: s.pseudonymId,
         studentId: s.pseudonymId,
-        currentFallback: s.fallbackCode,
+        currentFallback: s.fallbackCode || "",
         newCode: "",
       };
     });
@@ -222,24 +230,25 @@
             qrResult.fallbackCode ||
             `F-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
-          await db.students.put({
+          const key = get(sessionStore).sessionKey;
+          await saveStudentEncrypted({
             pseudonymId: pseudoId,
             examId,
             fallbackCode,
             piiCt: new Uint8Array([0]),
             piiIv: new Uint8Array(12),
-          });
+          }, key);
 
           const subId: string = crypto.randomUUID();
           activeSubmissionId = subId;
-          await db.submissions.add({
+          await saveSubmissionEncrypted({
             id: subId,
             examId,
             pseudonymHash: pseudoId,
             scanCt,
             scanIv: scanIv || new Uint8Array(12),
             createdAt: new Date().toISOString(),
-          });
+          }, key);
           scannedCount++;
 
           if ($storagePolicyStore === "server-synced") {
@@ -276,22 +285,23 @@
             activePseudonymId = pseudoId;
             activeSubmissionId = subId;
 
-            await db.students.put({
+            const key = get(sessionStore).sessionKey;
+            await saveStudentEncrypted({
               pseudonymId: pseudoId,
               examId,
               fallbackCode: `UNMATCHED-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
               piiCt: new Uint8Array([0]),
               piiIv: new Uint8Array(12),
-            });
+            }, key);
 
-            await db.submissions.add({
+            await saveSubmissionEncrypted({
               id: subId,
               examId,
               pseudonymHash: pseudoId,
               scanCt,
               scanIv: scanIv || new Uint8Array(12),
               createdAt: new Date().toISOString(),
-            });
+            }, key);
             scannedCount++;
 
             if ($storagePolicyStore === "server-synced") {
@@ -334,10 +344,12 @@
 
   async function updateFallbackCode(item: UnmatchedSubmission) {
     if (!item.newCode.trim()) return;
-    const st = await db.students.get(item.studentId);
-    if (st) {
+    const key = get(sessionStore).sessionKey;
+    const rawSt = await db.students.get(item.studentId);
+    if (rawSt) {
+      const st = await decryptStudent(rawSt, key);
       st.fallbackCode = item.newCode.trim();
-      await db.students.put(st);
+      await saveStudentEncrypted(st, key);
       await refreshUnmatched();
       alert(`Updated fallback code to "${st.fallbackCode}"`);
     }

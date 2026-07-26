@@ -3,9 +3,12 @@
   import { onMount } from 'svelte';
   import { db } from '$lib/db/db';
   import type { ExamRecord, SubmissionRecord, StudentRecord } from '$lib/db/schema';
+  import { loadExamEncrypted, decryptSubmission, decryptStudent, encryptAuditEntry } from '$lib/db/dbEncryption';
+  import { sessionStore } from '$lib/stores/session';
   import { calculateSummaryStats, type SummaryStats } from '$lib/analytics/stats';
   import { checkKAnonymity } from '$lib/analytics/kanonymity';
   import { exportGradesToCsv } from '$lib/analytics/csvExport';
+  import { get } from 'svelte/store';
 
   const examId = $page.params.id || '';
 
@@ -17,10 +20,12 @@
 
   onMount(async () => {
     if (!examId) return;
-    exam = (await db.exams.get(examId)) || null;
-    submissions = await db.submissions.where('examId').equals(examId).toArray();
-    students = await db.students.where('examId').equals(examId).toArray();
-
+    const key = get(sessionStore).sessionKey;
+    exam = (await loadExamEncrypted(examId, key)) || null;
+    const rawSubs = await db.submissions.where('examId').equals(examId).toArray();
+    submissions = await Promise.all(rawSubs.map(s => decryptSubmission(s, key)));
+    const rawSts = await db.students.where('examId').equals(examId).toArray();
+    students = await Promise.all(rawSts.map(st => decryptStudent(st, key)));
 
     const scores = submissions
       .map((s) => s.totalScore)
@@ -33,21 +38,28 @@
 
   async function confirmAndExport() {
     showConfirmModal = false;
+    const key = get(sessionStore).sessionKey;
     const rows = students.map((st) => {
       const sub = submissions.find((s) => s.pseudonymHash === st.pseudonymId || s.examId === st.examId);
       return {
         studentPseudonymId: st.pseudonymId,
-        fallbackCode: st.fallbackCode,
+        fallbackCode: st.fallbackCode || '',
         totalScore: sub?.totalScore ?? 'N/A',
       };
     });
 
-    await db.auditLog.add({
+    const encryptedAudit = await encryptAuditEntry({
       id: crypto.randomUUID(),
       action: 'EXPORT',
       targetId: examId,
       timestamp: new Date().toISOString(),
       note: `CSV grade export for ${exam?.title || 'Exam'} (${rows.length} rows)`,
+    }, key);
+    await db.auditLog.add(encryptedAudit);
+
+    await exportGradesToCsv(examId, exam?.title || 'Exam', rows);
+  }
+</script>
     });
 
     await exportGradesToCsv(examId, exam?.title || 'Exam', rows);

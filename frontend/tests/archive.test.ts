@@ -3,11 +3,14 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { packProject } from '../src/lib/archive/packer';
 import { unpackProject } from '../src/lib/archive/unpacker';
 import { db } from '../src/lib/db/db';
+import { saveExamEncrypted, saveStudentEncrypted, loadExamsEncrypted, loadStudentsEncrypted } from '../src/lib/db/dbEncryption';
+import { sessionStore } from '../src/lib/stores/session';
 import { eraseStudent } from '../src/lib/gdpr/erasure';
 import { checkRetention } from '../src/lib/gdpr/retention';
 
 describe('.bgproj Archive Packer and Unpacker', () => {
   const testPassword = 'SuperSecretTeacherPassword123!';
+  let testKey: CryptoKey;
 
   beforeEach(async () => {
     await db.exams.clear();
@@ -15,27 +18,41 @@ describe('.bgproj Archive Packer and Unpacker', () => {
     await db.students.clear();
     await db.submissions.clear();
     await db.auditLog.clear();
+
+    const rawKey = new Uint8Array(32).fill(7);
+    testKey = await crypto.subtle.importKey(
+      'raw',
+      rawKey,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt']
+    );
+    sessionStore.unlock({
+      masterKey: testKey,
+      sessionKey: testKey,
+      sessionNonce: new Uint8Array(12),
+    });
   });
 
   it('performs full pack and unpack round-trip correctly', async () => {
     // Populate mock DB data
     const examId = 'exam-uuid-1';
-    await db.exams.add({
+    await saveExamEncrypted({
       id: examId,
       teacherId: 'teacher-1',
       title: 'Mathematics Final Exam',
       retentionUntil: '2027-12-31',
       compilationStatus: 'compiled',
       createdAt: new Date().toISOString(),
-    });
+    }, testKey);
 
-    await db.students.add({
+    await saveStudentEncrypted({
       pseudonymId: 'student-uuid-99',
       examId,
       fallbackCode: 'A-X7K2M9',
       piiCt: new Uint8Array([1, 2, 3, 4]),
       piiIv: new Uint8Array(12).fill(1),
-    });
+    }, testKey);
 
     // Pack project
     const packedBytes = await packProject(testPassword);
@@ -51,11 +68,11 @@ describe('.bgproj Archive Packer and Unpacker', () => {
     expect(result.studentCount).toBe(1);
 
     // Verify restored IDB contents
-    const restoredExams = await db.exams.toArray();
+    const restoredExams = await loadExamsEncrypted(testKey);
     expect(restoredExams).toHaveLength(1);
     expect(restoredExams[0].title).toBe('Mathematics Final Exam');
 
-    const restoredStudents = await db.students.toArray();
+    const restoredStudents = await loadStudentsEncrypted(testKey);
     expect(restoredStudents).toHaveLength(1);
     expect(restoredStudents[0].fallbackCode).toBe('A-X7K2M9');
   });

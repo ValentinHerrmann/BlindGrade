@@ -2,6 +2,18 @@ import { describe, it, expect } from 'vitest';
 import { encrypt, decrypt, toBase64url, fromBase64url } from '../src/lib/crypto/aesGcm';
 import { hmacPseudonymId, importHmacKey, hmacSha256Hex } from '../src/lib/crypto/hmac';
 import { deriveSessionKey, generateSessionNonce } from '../src/lib/crypto/sessionKey';
+import {
+  encryptExam,
+  decryptExam,
+  encryptExercise,
+  decryptExercise,
+  encryptStudent,
+  decryptStudent,
+  encryptScore,
+  decryptScore,
+  encryptSubmission,
+  decryptSubmission,
+} from '../src/lib/db/dbEncryption';
 
 describe('AES-256-GCM Cryptography', () => {
   it('encrypts and decrypts round-trip successfully', async () => {
@@ -112,5 +124,70 @@ describe('HKDF Session Key Derivation', () => {
 
     const sessionKey = await deriveSessionKey(masterKey, nonce);
     expect(sessionKey.algorithm.name).toBe('AES-GCM');
+  });
+});
+
+describe('IndexedDB Record Encryption-at-Rest', () => {
+  async function createTestKey(): Promise<CryptoKey> {
+    const rawKey = new Uint8Array(32).fill(123);
+    return await crypto.subtle.importKey(
+      'raw',
+      rawKey,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt']
+    );
+  }
+
+  it('encrypts and decrypts ExamRecord payloads correctly', async () => {
+    const key = await createTestKey();
+    const originalExam = {
+      id: 'exam-uuid-1',
+      teacherId: 'teacher@school.org',
+      title: 'Informatik Schulaufgabe',
+      latexPreamble: '\\usepackage{tikz}',
+      latexTemplate: '\\begin{document}Test\\end{document}',
+      retentionUntil: '2026-12-31',
+      compilationStatus: 'compiled' as const,
+      createdAt: '2026-07-26T10:00:00Z',
+    };
+
+    const encrypted = await encryptExam(originalExam, key);
+    expect(encrypted.payloadCt).toBeDefined();
+    expect(encrypted.payloadIv).toBeDefined();
+
+    // Decrypt with key
+    const decrypted = await decryptExam(encrypted, key);
+    expect(decrypted.title).toBe('Informatik Schulaufgabe');
+    expect(decrypted.latexPreamble).toBe('\\usepackage{tikz}');
+    expect(decrypted.latexTemplate).toBe('\\begin{document}Test\\end{document}');
+
+    // Decrypt without key (locked state) returns unencrypted properties undefined
+    const lockedDecrypted = await decryptExam(encrypted, null);
+    expect(lockedDecrypted.title).toBeUndefined();
+    expect(lockedDecrypted.latexPreamble).toBeUndefined();
+  });
+
+  it('encrypts and decrypts ExerciseRecord payloads correctly', async () => {
+    const key = await createTestKey();
+    const originalEx = {
+      id: 'ex-uuid-1',
+      name: 'Algorithm Analysis',
+      latexBody: '\\begin{Aufgabe}{Sortieren}\\end{Aufgabe}',
+      maxPoints: 10,
+      questionType: 'free_text' as const,
+      penalty: 0,
+    };
+
+    const encrypted = await encryptExercise(originalEx, key);
+    expect(encrypted.payloadCt).toBeDefined();
+
+    const decrypted = await decryptExercise(encrypted, key);
+    expect(decrypted.name).toBe('Algorithm Analysis');
+    expect(decrypted.latexBody).toBe('\\begin{Aufgabe}{Sortieren}\\end{Aufgabe}');
+
+    const locked = await decryptExercise(encrypted, null);
+    expect(locked.name).toBeUndefined();
+    expect(locked.latexBody).toBeUndefined();
   });
 });

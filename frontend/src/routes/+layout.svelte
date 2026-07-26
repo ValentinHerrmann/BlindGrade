@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { registerHygieneListeners } from "$lib/db/hygiene";
+  import { beforeNavigate } from "$app/navigation";
+  import { get } from "svelte/store";
+  import { registerHygieneListeners, lockSession } from "$lib/db/hygiene";
   import { sessionStore, isUnlocked } from "$lib/stores/session";
   import {
     storagePolicyStore,
@@ -12,8 +14,17 @@
     registerHygieneListeners();
   });
 
-  function handleLock() {
-    sessionStore.lock();
+  beforeNavigate(({ cancel }) => {
+    const session = get(sessionStore);
+    if (session.isDirty) {
+      if (!confirm("You have unsaved changes. Are you sure you want to leave this page?")) {
+        cancel();
+      }
+    }
+  });
+
+  async function handleLock() {
+    await lockSession();
     window.location.href = "/unlock";
   }
 </script>

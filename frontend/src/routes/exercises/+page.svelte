@@ -1,38 +1,43 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { db } from '$lib/db/db';
-  import { sessionStore } from '$lib/stores/session';
-  import { storagePolicyStore } from '$lib/stores/storagePolicy';
-  import type { ExerciseRecord } from '$lib/db/schema';
-  import { api } from '$lib/api/client';
-  import { parseExerciseScore } from '$lib/latex/scoreParser';
-  import { syncLocalDataToServer } from '$lib/services/migrationService';
+  import { onMount } from "svelte";
+  import { db } from "$lib/db/db";
+  import { sessionStore } from "$lib/stores/session";
+  import { storagePolicyStore } from "$lib/stores/storagePolicy";
+  import type { ExerciseRecord } from "$lib/db/schema";
+  import { loadExercisesEncrypted, saveExerciseEncrypted, encryptExercise } from "$lib/db/dbEncryption";
+  import { api } from "$lib/api/client";
+  import { parseExerciseScore } from "$lib/latex/scoreParser";
+  import { syncLocalDataToServer } from "$lib/services/migrationService";
+  import { get } from "svelte/store";
 
   let exercises: ExerciseRecord[] = [];
-  let selectedTopic: string = 'ALL';
-  let searchQuery: string = '';
+  let selectedTopic: string = "ALL";
+  let searchQuery: string = "";
   let isLoading = false;
-  let errorMsg = '';
+  let errorMsg = "";
   let isLocalFallback = false;
   let isSyncingExercises = false;
 
   // Editor modal state
   let isEditorOpen = false;
   let editingId: string | null = null;
-  let editorName = '';
-  let editorTopicTag = '_General';
-  let editorLatexBody = '';
+  let editorName = "";
+  let editorTopicTag = "_General";
+  let editorLatexBody = "";
 
   // Preview state
   let isPreviewLoading = false;
   let previewPdfUrl: string | null = null;
 
   $: availableTopics = Array.from(
-    new Set(exercises.map((e) => e.topicTag).filter((t): t is string => Boolean(t)))
+    new Set(
+      exercises.map((e) => e.topicTag).filter((t): t is string => Boolean(t)),
+    ),
   ).sort();
 
   $: filteredExercises = exercises.filter((ex) => {
-    const matchesTopic = selectedTopic === 'ALL' || ex.topicTag === selectedTopic;
+    const matchesTopic =
+      selectedTopic === "ALL" || ex.topicTag === selectedTopic;
     const q = searchQuery.toLowerCase().trim();
     const matchesSearch =
       !q ||
@@ -48,11 +53,12 @@
 
   async function loadExercises() {
     isLoading = true;
-    errorMsg = '';
+    errorMsg = "";
+    const key = get(sessionStore).sessionKey;
     try {
-      if ($storagePolicyStore === 'server-synced') {
+      if ($storagePolicyStore === "server-synced") {
         try {
-          const remoteExs = (await api.get('/exercises')) as any[];
+          const remoteExs = (await api.get("/exercises")) as any[];
           exercises = remoteExs.map((e: any) => ({
             id: e.id,
             teacherId: e.teacher_id,
@@ -61,22 +67,26 @@
             latexBody: e.latex_body,
             maxPoints: e.max_points,
             version: e.version || 1,
-            questionType: e.question_type || 'free_text',
+            questionType: e.question_type || "free_text",
             penalty: e.penalty || 0,
           }));
-          await db.exercises.bulkPut(exercises);
+          const encryptedExs = await Promise.all(exercises.map(ex => encryptExercise(ex, key)));
+          await db.exercises.bulkPut(encryptedExs);
           isLocalFallback = false;
         } catch (apiErr) {
-          console.warn('Failed to fetch remote exercises, falling back to IDB:', apiErr);
-          exercises = await db.exercises.toArray();
+          console.warn(
+            "Failed to fetch remote exercises, falling back to IDB:",
+            apiErr,
+          );
+          exercises = await loadExercisesEncrypted(key);
           isLocalFallback = true;
         }
       } else {
         isLocalFallback = false;
-        exercises = await db.exercises.toArray();
+        exercises = await loadExercisesEncrypted(key);
       }
     } catch (err: any) {
-      errorMsg = err.message || 'Failed to load exercise library.';
+      errorMsg = err.message || "Failed to load exercise library.";
     } finally {
       isLoading = false;
     }
@@ -87,7 +97,7 @@
     try {
       await syncLocalDataToServer();
       await loadExercises();
-      alert('Exercises successfully synced to server!');
+      alert("Exercises successfully synced to server!");
     } catch (err: any) {
       alert(`Sync failed: ${err.message}`);
     } finally {
@@ -97,8 +107,8 @@
 
   function openCreateModal() {
     editingId = null;
-    editorName = 'New_Exercise';
-    editorTopicTag = '_General';
+    editorName = "New_Exercise";
+    editorTopicTag = "_General";
     editorLatexBody = `\\begin{Aufgabe}{Neue Aufgabe}
 Frage hier eingeben... \\BE
 \\end{Aufgabe}`;
@@ -109,9 +119,9 @@ Frage hier eingeben... \\BE
 
   function openEditModal(ex: ExerciseRecord) {
     editingId = ex.id;
-    editorName = ex.name || 'Untitled';
-    editorTopicTag = ex.topicTag || '_General';
-    editorLatexBody = ex.latexBody || '';
+    editorName = ex.name || "Untitled";
+    editorTopicTag = ex.topicTag || "_General";
+    editorLatexBody = ex.latexBody || "";
     if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
     previewPdfUrl = null;
     isEditorOpen = true;
@@ -147,12 +157,14 @@ ${editorLatexBody}
 
 \\end{document}`;
 
-      const pdfBuffer = await api.postJsonForBinary('/compile/latex', { latex: fullTex });
-      const blob = new Blob([pdfBuffer], { type: 'application/pdf' });
+      const pdfBuffer = await api.postJsonForBinary("/compile/latex", {
+        latex: fullTex,
+      });
+      const blob = new Blob([pdfBuffer], { type: "application/pdf" });
       if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
       previewPdfUrl = URL.createObjectURL(blob);
     } catch (err: any) {
-      alert(`Preview failed: ${err.message || 'Unknown compilation error'}`);
+      alert(`Preview failed: ${err.message || "Unknown compilation error"}`);
     } finally {
       isPreviewLoading = false;
     }
@@ -160,7 +172,7 @@ ${editorLatexBody}
 
   async function handleSaveExercise() {
     if (!editorName.trim()) {
-      alert('Exercise name is required.');
+      alert("Exercise name is required.");
       return;
     }
 
@@ -169,21 +181,22 @@ ${editorLatexBody}
 
     const record: ExerciseRecord = {
       id,
-      teacherId: $sessionStore.email || 'local-teacher',
+      teacherId: $sessionStore.email || "local-teacher",
       name: editorName,
       topicTag: editorTopicTag,
       latexBody: editorLatexBody,
       maxPoints: computedScore,
       version: (exercises.find((e) => e.id === id)?.version || 0) + 1,
-      questionType: 'free_text',
+      questionType: "free_text",
       penalty: 0,
       updatedAt: new Date().toISOString(),
     };
 
     try {
-      await db.exercises.put(record);
+      const key = get(sessionStore).sessionKey;
+      await saveExerciseEncrypted(record, key);
 
-      if ($storagePolicyStore === 'server-synced') {
+      if ($storagePolicyStore === "server-synced") {
         try {
           if (editingId) {
             await api.patch(`/exercises/${id}`, {
@@ -192,7 +205,7 @@ ${editorLatexBody}
               latex_body: record.latexBody,
             });
           } else {
-            await api.post('/exercises', {
+            await api.post("/exercises", {
               id: record.id,
               name: record.name,
               topic_tag: record.topicTag,
@@ -200,7 +213,7 @@ ${editorLatexBody}
             });
           }
         } catch (apiErr) {
-          console.warn('Failed to sync exercise to server:', apiErr);
+          console.warn("Failed to sync exercise to server:", apiErr);
         }
       }
 
@@ -214,16 +227,21 @@ ${editorLatexBody}
   // Variant modal state
   let isVariantModalOpen = false;
   let variantBaseEx: ExerciseRecord | null = null;
-  let variantKey = 'Moebel';
-  let variantName = '';
-  let variantTopicTag = '_Vererbung';
-  let variantLatexBody = '';
+  let variantKey = "Moebel";
+  let variantName = "";
+  let variantTopicTag = "_Vererbung";
+  let variantLatexBody = "";
 
   async function handleCreateNewVersion(ex: ExerciseRecord) {
-    if (!confirm(`Create new corrected version (v${(ex.version || 1) + 1}) of "${ex.name}"? Previous version will be archived for statistics.`)) return;
+    if (
+      !confirm(
+        `Create new corrected version (v${(ex.version || 1) + 1}) of "${ex.name}"? Previous version will be archived for statistics.`,
+      )
+    )
+      return;
 
     try {
-      if ($storagePolicyStore === 'server-synced') {
+      if ($storagePolicyStore === "server-synced") {
         await api.post(`/exercises/${ex.id}/new-version`, {
           name: ex.name,
           topic_tag: ex.topicTag,
@@ -250,22 +268,22 @@ ${editorLatexBody}
 
   function openVariantModal(ex: ExerciseRecord) {
     variantBaseEx = ex;
-    variantName = `${ex.name || 'Exercise'} (Variant)`;
-    variantKey = 'Moebel';
-    variantTopicTag = ex.topicTag || '_General';
-    variantLatexBody = ex.latexBody || '';
+    variantName = `${ex.name || "Exercise"} (Variant)`;
+    variantKey = "Moebel";
+    variantTopicTag = ex.topicTag || "_General";
+    variantLatexBody = ex.latexBody || "";
     isVariantModalOpen = true;
   }
 
   async function handleSaveVariant() {
     if (!variantBaseEx) return;
     if (!variantKey.trim()) {
-      alert('Variant key (e.g. Moebel, Fahrzeug, Wildtier) is required.');
+      alert("Variant key (e.g. Moebel, Fahrzeug, Wildtier) is required.");
       return;
     }
 
     try {
-      if ($storagePolicyStore === 'server-synced') {
+      if ($storagePolicyStore === "server-synced") {
         await api.post(`/exercises/${variantBaseEx.id}/new-variant`, {
           name: variantName,
           topic_tag: variantTopicTag,
@@ -275,7 +293,7 @@ ${editorLatexBody}
       } else {
         const variantRecord: ExerciseRecord = {
           id: crypto.randomUUID(),
-          teacherId: $sessionStore.email || 'local-teacher',
+          teacherId: $sessionStore.email || "local-teacher",
           name: variantName,
           topicTag: variantTopicTag,
           latexBody: variantLatexBody,
@@ -284,7 +302,7 @@ ${editorLatexBody}
           exerciseGroupId: variantBaseEx.exerciseGroupId || crypto.randomUUID(),
           variantKey: variantKey,
           isCurrent: true,
-          questionType: 'free_text',
+          questionType: "free_text",
           penalty: 0,
           updatedAt: new Date().toISOString(),
         };
@@ -303,9 +321,15 @@ ${editorLatexBody}
 <div class="exercise-library-page">
   {#if isLocalFallback}
     <div class="local-fallback-banner">
-      <span>ℹ️ Exercise library is currently loaded from local browser storage.</span>
-      <button class="sync-now-btn" on:click={syncExercisesToServer} disabled={isSyncingExercises}>
-        {isSyncingExercises ? 'Syncing...' : 'Sync to Server Now'}
+      <span
+        >ℹ️ Exercise library is currently loaded from local browser storage.</span
+      >
+      <button
+        class="sync-now-btn"
+        on:click={syncExercisesToServer}
+        disabled={isSyncingExercises}
+      >
+        {isSyncingExercises ? "Syncing..." : "Sync to Server Now"}
       </button>
     </div>
   {/if}
@@ -313,9 +337,13 @@ ${editorLatexBody}
   <div class="page-header">
     <div>
       <h2>Exercise Library (Aufgabenkatalog)</h2>
-      <p class="subtitle">Reusable LaTeX exercise collection live-linked across your exams.</p>
+      <p class="subtitle">
+        Reusable LaTeX exercise collection live-linked across your exams.
+      </p>
     </div>
-    <button class="create-btn" on:click={openCreateModal}>+ Create New Exercise</button>
+    <button class="create-btn" on:click={openCreateModal}
+      >+ Create New Exercise</button
+    >
   </div>
 
   {#if errorMsg}
@@ -334,8 +362,8 @@ ${editorLatexBody}
     <div class="topic-pills">
       <button
         class="pill"
-        class:active={selectedTopic === 'ALL'}
-        on:click={() => (selectedTopic = 'ALL')}
+        class:active={selectedTopic === "ALL"}
+        on:click={() => (selectedTopic = "ALL")}
       >
         All ({exercises.length})
       </button>
@@ -357,15 +385,17 @@ ${editorLatexBody}
   {:else if filteredExercises.length === 0}
     <div class="empty-state">
       <p>No exercises found matching your criteria.</p>
-      <button class="create-btn" on:click={openCreateModal}>Create First Exercise</button>
+      <button class="create-btn" on:click={openCreateModal}
+        >Create First Exercise</button
+      >
     </div>
   {:else}
     <div class="exercise-grid">
       {#each filteredExercises as ex}
-        {@const score = parseExerciseScore(ex.latexBody || '')}
+        {@const score = parseExerciseScore(ex.latexBody || "")}
         <div class="exercise-card">
           <div class="card-header">
-            <h4>{ex.name || 'Untitled'}</h4>
+            <h4>{ex.name || "Untitled"}</h4>
             <div class="badges">
               {#if ex.topicTag}
                 <span class="topic-badge">{ex.topicTag}</span>
@@ -379,13 +409,22 @@ ${editorLatexBody}
           </div>
 
           <div class="snippet-preview">
-            <code>{(ex.latexBody || '').slice(0, 150)}...</code>
+            <code>{(ex.latexBody || "").slice(0, 150)}...</code>
           </div>
 
           <div class="card-actions">
-            <button class="action-btn edit-btn" on:click={() => openEditModal(ex)}>Edit</button>
-            <button class="action-btn version-btn" on:click={() => handleCreateNewVersion(ex)}>+ Version</button>
-            <button class="action-btn variant-btn" on:click={() => openVariantModal(ex)}>+ Variant</button>
+            <button
+              class="action-btn edit-btn"
+              on:click={() => openEditModal(ex)}>Edit</button
+            >
+            <button
+              class="action-btn version-btn"
+              on:click={() => handleCreateNewVersion(ex)}>+ Version</button
+            >
+            <button
+              class="action-btn variant-btn"
+              on:click={() => openVariantModal(ex)}>+ Variant</button
+            >
           </div>
         </div>
       {/each}
@@ -399,23 +438,32 @@ ${editorLatexBody}
     role="button"
     tabindex="-1"
     on:click|self={() => (isVariantModalOpen = false)}
-    on:keydown|self={(e) => e.key === 'Escape' && (isVariantModalOpen = false)}
+    on:keydown|self={(e) => e.key === "Escape" && (isVariantModalOpen = false)}
   >
     <div class="modal-content">
       <div class="modal-header">
         <h3>Create Parallel Exercise Variant</h3>
-        <button class="close-btn" on:click={() => (isVariantModalOpen = false)}>✕</button>
+        <button class="close-btn" on:click={() => (isVariantModalOpen = false)}
+          >✕</button
+        >
       </div>
 
       <div class="modal-body">
         <p class="desc-text">
-          Variants share the same exercise type structure but use a different theme (e.g. Möbel, Fahrzeug, Wildtier). This allows generating parallel exam groups while maintaining statistical comparability.
+          Variants share the same exercise type structure but use a different
+          theme (e.g. Möbel, Fahrzeug, Wildtier). This allows generating
+          parallel exam groups while maintaining statistical comparability.
         </p>
 
         <div class="form-grid">
           <div class="form-group">
             <label for="variantName">Variant Name</label>
-            <input id="variantName" type="text" bind:value={variantName} required />
+            <input
+              id="variantName"
+              type="text"
+              bind:value={variantName}
+              required
+            />
           </div>
 
           <div class="form-group">
@@ -432,11 +480,18 @@ ${editorLatexBody}
 
         <div class="form-group">
           <label for="variantTopic">Topic Tag</label>
-          <input id="variantTopic" type="text" bind:value={variantTopicTag} required />
+          <input
+            id="variantTopic"
+            type="text"
+            bind:value={variantTopicTag}
+            required
+          />
         </div>
 
         <div class="form-group">
-          <label for="variantBody">LaTeX Body (\\begin&#123;Aufgabe&#125;...)</label>
+          <label for="variantBody"
+            >LaTeX Body (\\begin&#123;Aufgabe&#125;...)</label
+          >
           <textarea
             id="variantBody"
             rows="8"
@@ -447,8 +502,12 @@ ${editorLatexBody}
       </div>
 
       <div class="modal-footer">
-        <button class="cancel-btn" on:click={() => (isVariantModalOpen = false)}>Cancel</button>
-        <button class="save-btn" on:click={handleSaveVariant}>Save Variant</button>
+        <button class="cancel-btn" on:click={() => (isVariantModalOpen = false)}
+          >Cancel</button
+        >
+        <button class="save-btn" on:click={handleSaveVariant}
+          >Save Variant</button
+        >
       </div>
     </div>
   </div>
@@ -460,11 +519,13 @@ ${editorLatexBody}
     role="button"
     tabindex="-1"
     on:click|self={closeEditor}
-    on:keydown|self={(e) => e.key === 'Escape' && closeEditor()}
+    on:keydown|self={(e) => e.key === "Escape" && closeEditor()}
   >
     <div class="modal-content">
       <div class="modal-header">
-        <h3>{editingId ? `Edit Exercise: ${editorName}` : 'Create New Exercise'}</h3>
+        <h3>
+          {editingId ? `Edit Exercise: ${editorName}` : "Create New Exercise"}
+        </h3>
         <button class="close-btn" on:click={closeEditor}>✕</button>
       </div>
 
@@ -478,7 +539,12 @@ ${editorLatexBody}
         <div class="form-grid">
           <div class="form-group">
             <label for="editorName">Exercise Name</label>
-            <input id="editorName" type="text" bind:value={editorName} required />
+            <input
+              id="editorName"
+              type="text"
+              bind:value={editorName}
+              required
+            />
           </div>
 
           <div class="form-group">
@@ -495,9 +561,13 @@ ${editorLatexBody}
 
         <div class="form-group">
           <div class="label-row">
-            <label for="editorBody">LaTeX Body (\\begin&#123;Aufgabe&#125;...)</label>
+            <label for="editorBody"
+              >LaTeX Body (\\begin&#123;Aufgabe&#125;...)</label
+            >
             <span class="score-indicator">
-              Auto-Score: <strong>{parseExerciseScore(editorLatexBody)} Pkt</strong>
+              Auto-Score: <strong
+                >{parseExerciseScore(editorLatexBody)} Pkt</strong
+              >
             </span>
           </div>
           <textarea
@@ -515,21 +585,28 @@ ${editorLatexBody}
             on:click={handlePreviewExercise}
             disabled={isPreviewLoading}
           >
-            {isPreviewLoading ? 'Compiling Preview...' : '🔍 Live Preview PDF'}
+            {isPreviewLoading ? "Compiling Preview..." : "🔍 Live Preview PDF"}
           </button>
         </div>
 
         {#if previewPdfUrl}
           <div class="preview-box">
             <h4>Single Exercise PDF Preview</h4>
-            <iframe src={previewPdfUrl} title="Exercise Preview" width="100%" height="350px"></iframe>
+            <iframe
+              src={previewPdfUrl}
+              title="Exercise Preview"
+              width="100%"
+              height="350px"
+            ></iframe>
           </div>
         {/if}
       </div>
 
       <div class="modal-footer">
         <button class="cancel-btn" on:click={closeEditor}>Cancel</button>
-        <button class="save-btn" on:click={handleSaveExercise}>Save Exercise</button>
+        <button class="save-btn" on:click={handleSaveExercise}
+          >Save Exercise</button
+        >
       </div>
     </div>
   </div>
@@ -781,7 +858,8 @@ ${editorLatexBody}
     color: #cbd5e1;
   }
 
-  input, textarea {
+  input,
+  textarea {
     padding: 0.625rem;
     background: #0f172a;
     border: 1px solid #334155;
@@ -790,7 +868,7 @@ ${editorLatexBody}
   }
 
   .code-editor {
-    font-family: 'Fira Code', 'Courier New', Courier, monospace;
+    font-family: "Fira Code", "Courier New", Courier, monospace;
     font-size: 0.9rem;
     line-height: 1.4;
   }
@@ -855,7 +933,8 @@ ${editorLatexBody}
     cursor: pointer;
   }
 
-  .loading, .empty-state {
+  .loading,
+  .empty-state {
     text-align: center;
     padding: 3rem;
     color: #94a3b8;

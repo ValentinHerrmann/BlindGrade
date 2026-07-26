@@ -3,6 +3,8 @@
   import { eraseStudent } from "$lib/gdpr/erasure";
   import { wipeDatabase } from "$lib/db/hygiene";
   import { sessionStore, isUnlocked } from "$lib/stores/session";
+  import { loadStudentsEncrypted } from "$lib/db/dbEncryption";
+  import { get } from "svelte/store";
   import {
     storagePolicyStore,
     getStoragePolicyLabel,
@@ -46,7 +48,8 @@
       goto("/unlock");
       return;
     }
-    students = await db.students.toArray();
+    const key = get(sessionStore).sessionKey;
+    students = await loadStudentsEncrypted(key);
   });
 
   async function handlePolicyChange(newPolicy: StoragePolicy) {
@@ -205,7 +208,8 @@
             <strong>Latex on server + Student data encrypted on server</strong>
             <p>
               LaTeX compilation runs on server. Student identities are
-              AES-256-GCM encrypted client-side before syncing to database. Nobody except you can decrypt them; not even server admins.
+              AES-256-GCM encrypted client-side before syncing to database.
+              Nobody except you can decrypt them; not even server admins.
             </p>
           </div>
         </label>
@@ -269,20 +273,33 @@
         <ul class="counts-list">
           <li><strong>{unsyncedCounts.unsyncedExams}</strong> exams</li>
           <li><strong>{unsyncedCounts.unsyncedExercises}</strong> exercises</li>
-          <li><strong>{unsyncedCounts.unsyncedStudents}</strong> student identities</li>
-          <li><strong>{unsyncedCounts.unsyncedSubmissions}</strong> scan submissions</li>
+          <li>
+            <strong>{unsyncedCounts.unsyncedStudents}</strong> student identities
+          </li>
+          <li>
+            <strong>{unsyncedCounts.unsyncedSubmissions}</strong> scan submissions
+          </li>
         </ul>
         <p class="modal-note">
-          Syncing uploads your local data to the server. Student identities are AES-256-GCM encrypted client-side before upload.
+          Syncing uploads your local data to the server. Student identities are
+          AES-256-GCM encrypted client-side before upload.
         </p>
         {#if syncProgressMsg}
           <div class="progress-status">{syncProgressMsg}</div>
         {/if}
         <div class="modal-actions">
-          <button class="primary-btn" on:click={startMigration} disabled={isSyncing}>
+          <button
+            class="primary-btn"
+            on:click={startMigration}
+            disabled={isSyncing}
+          >
             {isSyncing ? "Syncing..." : "Sync All Local Data to Server"}
           </button>
-          <button class="secondary-btn" on:click={skipMigration} disabled={isSyncing}>
+          <button
+            class="secondary-btn"
+            on:click={skipMigration}
+            disabled={isSyncing}
+          >
             Skip Migration
           </button>
         </div>
@@ -295,16 +312,24 @@
       <div class="modal-card">
         <h3>Switch to Local-Only & Server Student Data Purge</h3>
         <p>
-          Switching to <strong>Local-Only</strong> mode will download an encrypted <code>.bgproj</code> archive backup of all your exams and remove active student data from your account on the server.
+          Switching to <strong>Local-Only</strong> mode will download an
+          encrypted <code>.bgproj</code> archive backup of all your exams and remove
+          active student data from your account on the server.
         </p>
         <div class="retention-notice">
           <strong>Data Retention Notes:</strong>
           <ul>
             <li>
-              <strong>Student Data Purge</strong>: Student identities, scans, and grades will be soft-deleted on the server with a <strong>7-day temporary retention backup</strong> (for accidental recovery) before permanent deletion.
+              <strong>Student Data Purge</strong>: Student identities, scans,
+              and grades will be soft-deleted on the server with a
+              <strong>7-day temporary retention backup</strong> (for accidental recovery)
+              before permanent deletion.
             </li>
             <li>
-              <strong>LaTeX Templates</strong>: Anonymized LaTeX exercise code and exam preambles will <strong>remain stored on the server</strong> to preserve your reusable exercise library and allow server-side compilation.
+              <strong>LaTeX Templates</strong>: Anonymized LaTeX exercise code
+              and exam preambles will
+              <strong>remain stored on the server</strong> to preserve your reusable
+              exercise library and allow server-side compilation.
             </li>
           </ul>
         </div>
@@ -325,11 +350,16 @@
             on:click={startPurgeAndBackup}
             disabled={isPurging || !purgePassword}
           >
-            {isPurging ? "Downloading & Purging..." : "Download Backup & Purge Server Student Data"}
+            {isPurging
+              ? "Downloading & Purging..."
+              : "Download Backup & Purge Server Student Data"}
           </button>
           <button
             class="secondary-btn"
-            on:click={() => { showPurgeModal = false; purgePassword = ""; }}
+            on:click={() => {
+              showPurgeModal = false;
+              purgePassword = "";
+            }}
             disabled={isPurging}
           >
             Cancel
@@ -339,8 +369,15 @@
         <hr class="modal-divider" />
 
         <div class="restore-section">
-          <p class="restore-hint">Made a mistake? You can restore soft-deleted student data within 7 days.</p>
-          <button class="restore-btn" on:click={handleRestoreServerData} disabled={isRestoring}>
+          <p class="restore-hint">
+            Made a mistake? You can restore soft-deleted student data within 7
+            days.
+          </p>
+          <button
+            class="restore-btn"
+            on:click={handleRestoreServerData}
+            disabled={isRestoring}
+          >
             {isRestoring ? "Restoring..." : "Restore Soft-Deleted Student Data"}
           </button>
         </div>

@@ -1,15 +1,31 @@
 <script lang="ts">
-  import { page } from '$app/stores';
-  import { onMount } from 'svelte';
-  import { db } from '$lib/db/db';
-  import type { ExamRecord, ExerciseRecord, SubmissionRecord } from '$lib/db/schema';
-  import { packProject } from '$lib/archive/packer';
-  import { compileLatex } from '$lib/latex/compiler';
-  import { api } from '$lib/api/client';
-  import { sessionStore } from '$lib/stores/session';
-  import { storagePolicyStore } from '$lib/stores/storagePolicy';
+  import { page } from "$app/stores";
+  import { onMount } from "svelte";
+  import { db } from "$lib/db/db";
+  import type {
+    ExamRecord,
+    ExerciseRecord,
+    SubmissionRecord,
+  } from "$lib/db/schema";
+  import {
+    loadExamEncrypted,
+    saveExamEncrypted,
+    loadExamExercisesEncrypted,
+    loadExercisesEncrypted,
+    loadStudentsEncrypted,
+    loadSubmissionsEncrypted,
+    decryptExercise,
+    decryptSubmission,
+    decryptStudent,
+  } from "$lib/db/dbEncryption";
+  import { packProject } from "$lib/archive/packer";
+  import { compileLatex } from "$lib/latex/compiler";
+  import { api } from "$lib/api/client";
+  import { sessionStore } from "$lib/stores/session";
+  import { storagePolicyStore } from "$lib/stores/storagePolicy";
+  import { get } from "svelte/store";
 
-  $: examId = $page.params.id || '';
+  $: examId = $page.params.id || "";
 
   let exam: ExamRecord | null = null;
   let exercises: ExerciseRecord[] = [];
@@ -18,7 +34,7 @@
   let exportSuccess = false;
 
   let isCompiling = false;
-  let compileNotice = '';
+  let compileNotice = "";
   let previewPdfUrl: string | null = null;
 
   $: if (examId) {
@@ -29,8 +45,9 @@
   let isSyncingSingle = false;
 
   async function loadExam(id: string) {
+    const key = get(sessionStore).sessionKey;
     try {
-      if ($storagePolicyStore === 'server-synced') {
+      if ($storagePolicyStore === "server-synced") {
         try {
           const remoteExam = (await api.get(`/exams/${id}`)) as any;
           exam = {
@@ -56,49 +73,64 @@
             maxPoints: e.max_points,
             version: e.version || 1,
             orderIndex: e.order_index,
-            questionType: e.question_type || 'free_text',
+            questionType: e.question_type || "free_text",
             penalty: e.penalty || 0,
           }));
           isLocalFallback = false;
         } catch (serverErr) {
           // Fall back to IndexedDB if exam is not on server
-          const localExam = (await db.exams.get(id)) || null;
-          if (localExam) {
-            exam = localExam;
+          exam = (await loadExamEncrypted(id, key)) || null;
+          if (exam) {
             isLocalFallback = true;
-            const links = await db.examExercises.where('examId').equals(id).sortBy('orderIndex');
+            const links = await db.examExercises
+              .where("examId")
+              .equals(id)
+              .sortBy("orderIndex");
             if (links.length > 0) {
               exercises = [];
               for (const link of links) {
-                const ex = await db.exercises.get(link.exerciseId);
-                if (ex) exercises.push({ ...ex, orderIndex: link.orderIndex });
+                const rawEx = await db.exercises.get(link.exerciseId);
+                if (rawEx) {
+                  const ex = await decryptExercise(rawEx, key);
+                  exercises.push({ ...ex, orderIndex: link.orderIndex });
+                }
               }
             } else {
-              exercises = await db.exercises.where('examId').equals(id).toArray();
+              const rawExs = await db.exercises
+                .where("examId")
+                .equals(id)
+                .toArray();
+              exercises = await Promise.all(rawExs.map(e => decryptExercise(e, key)));
             }
           } else {
-            console.error('Exam not found on server or locally:', serverErr);
+            console.error("Exam not found on server or locally:", serverErr);
           }
         }
       } else {
         isLocalFallback = false;
-        exam = (await db.exams.get(id)) || null;
-        const links = await db.examExercises.where('examId').equals(id).sortBy('orderIndex');
+        exam = (await loadExamEncrypted(id, key)) || null;
+        const links = await db.examExercises
+          .where("examId")
+          .equals(id)
+          .sortBy("orderIndex");
         if (links.length > 0) {
           exercises = [];
           for (const link of links) {
-            const ex = await db.exercises.get(link.exerciseId);
-            if (ex) {
+            const rawEx = await db.exercises.get(link.exerciseId);
+            if (rawEx) {
+              const ex = await decryptExercise(rawEx, key);
               exercises.push({ ...ex, orderIndex: link.orderIndex });
             }
           }
         } else {
-          exercises = await db.exercises.where('examId').equals(id).toArray();
+          const rawExs = await db.exercises.where("examId").equals(id).toArray();
+          exercises = await Promise.all(rawExs.map(e => decryptExercise(e, key)));
         }
       }
-      submissions = await db.submissions.where('examId').equals(id).toArray();
+      const rawSubs = await db.submissions.where("examId").equals(id).toArray();
+      submissions = await Promise.all(rawSubs.map(s => decryptSubmission(s, key)));
     } catch (err) {
-      console.error('Failed to load exam from DB:', err);
+      console.error("Failed to load exam from DB:", err);
     }
   }
 
@@ -107,7 +139,7 @@
     isSyncingSingle = true;
     try {
       // 1. Post exam
-      await api.post('/exams', {
+      await api.post("/exams", {
         id: exam.id,
         title: exam.title,
         testart: exam.testart,
@@ -119,19 +151,21 @@
         infoText: exam.infoText,
         latexPreamble: exam.latexPreamble,
         latexTemplate: exam.latexTemplate,
-        retentionUntil: exam.retentionUntil || new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10),
+        retentionUntil:
+          exam.retentionUntil ||
+          new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10),
       });
 
       // 2. Post exercises
       for (const ex of exercises) {
         try {
-          await api.post('/exercises', {
+          await api.post("/exercises", {
             id: ex.id,
-            title: ex.title || ex.name || 'Exercise',
-            latexBody: ex.latexBody || '',
+            title: ex.title || ex.name || "Exercise",
+            latexBody: ex.latexBody || "",
             maxPoints: ex.maxPoints,
             topicTag: ex.topicTag,
-            questionType: ex.questionType || 'free_text',
+            questionType: ex.questionType || "free_text",
             options: ex.options,
             correctAnswers: ex.correctAnswers,
             penalty: ex.penalty || 0,
@@ -141,15 +175,24 @@
 
       // Link exercises
       try {
-        await api.patch(`/exams/${exam.id}`, { exercise_ids: exercises.map((e) => e.id) });
+        await api.patch(`/exams/${exam.id}`, {
+          exercise_ids: exercises.map((e) => e.id),
+        });
       } catch {}
 
       // 3. Post students
-      const localStudents = await db.students.where('examId').equals(exam.id).toArray();
+      const localStudents = await db.students
+        .where("examId")
+        .equals(exam.id)
+        .toArray();
       for (const st of localStudents) {
         try {
-          const emptyCtB64 = btoa(String.fromCharCode(...(st.piiCt || new Uint8Array([0]))));
-          const emptyIvB64 = btoa(String.fromCharCode(...(st.piiIv || new Uint8Array(12))));
+          const emptyCtB64 = btoa(
+            String.fromCharCode(...(st.piiCt || new Uint8Array([0]))),
+          );
+          const emptyIvB64 = btoa(
+            String.fromCharCode(...(st.piiIv || new Uint8Array(12))),
+          );
           const emptySaltB64 = btoa(String.fromCharCode(...new Uint8Array(16)));
           await api.post(`/exams/${exam.id}/students`, {
             pseudonym_hmac: st.pseudonymId,
@@ -161,23 +204,34 @@
       }
 
       // 4. Post submissions
-      const localSubmissions = await db.submissions.where('examId').equals(exam.id).toArray();
+      const localSubmissions = await db.submissions
+        .where("examId")
+        .equals(exam.id)
+        .toArray();
       for (const sub of localSubmissions) {
         try {
           await api.post(`/exams/${exam.id}/submissions`, {
             id: sub.id,
             pseudonym_hmac: sub.pseudonymHash,
             total_score: sub.totalScore || 0,
-            scan_ciphertext_b64: sub.scanCt ? btoa(String.fromCharCode(...sub.scanCt)) : undefined,
-            scan_iv_b64: sub.scanIv ? btoa(String.fromCharCode(...sub.scanIv)) : undefined,
-            annotation_ciphertext_b64: sub.annotationCt ? btoa(String.fromCharCode(...sub.annotationCt)) : undefined,
-            annotation_iv_b64: sub.annotationIv ? btoa(String.fromCharCode(...sub.annotationIv)) : undefined,
+            scan_ciphertext_b64: sub.scanCt
+              ? btoa(String.fromCharCode(...sub.scanCt))
+              : undefined,
+            scan_iv_b64: sub.scanIv
+              ? btoa(String.fromCharCode(...sub.scanIv))
+              : undefined,
+            annotation_ciphertext_b64: sub.annotationCt
+              ? btoa(String.fromCharCode(...sub.annotationCt))
+              : undefined,
+            annotation_iv_b64: sub.annotationIv
+              ? btoa(String.fromCharCode(...sub.annotationIv))
+              : undefined,
           });
         } catch {}
       }
 
       isLocalFallback = false;
-      alert('Exam successfully synced to server!');
+      alert("Exam successfully synced to server!");
     } catch (err: any) {
       alert(`Failed to sync exam to server: ${err.message}`);
     } finally {
@@ -187,40 +241,47 @@
 
   async function handleDeleteExam() {
     if (!exam) return;
-    if (!confirm(`Are you sure you want to delete exam "${exam.title}" and all its submissions?`)) return;
+    if (
+      !confirm(
+        `Are you sure you want to delete exam "${exam.title}" and all its submissions?`,
+      )
+    )
+      return;
 
     try {
       await db.exams.delete(exam.id);
-      await db.exercises.where('examId').equals(exam.id).delete();
-      await db.submissions.where('examId').equals(exam.id).delete();
-      await db.students.where('examId').equals(exam.id).delete();
+      await db.exercises.where("examId").equals(exam.id).delete();
+      await db.submissions.where("examId").equals(exam.id).delete();
+      await db.students.where("examId").equals(exam.id).delete();
 
-      if ($storagePolicyStore === 'server-synced') {
+      if ($storagePolicyStore === "server-synced") {
         try {
           await api.delete(`/exams/${exam.id}`);
         } catch (e) {
-          console.warn('Failed to delete on server:', e);
+          console.warn("Failed to delete on server:", e);
         }
       }
 
-      window.location.href = '/';
+      window.location.href = "/";
     } catch (err: any) {
       alert(`Delete failed: ${err.message}`);
     }
   }
 
   async function handleExportArchive() {
-    const password = prompt('Enter password to encrypt .bgproj archive:');
+    const password = prompt("Enter password to encrypt .bgproj archive:");
     if (!password) return;
 
     isExporting = true;
     try {
       const bytes = await packProject(password);
-      const blob = new Blob([bytes.buffer as ArrayBuffer], { type: 'application/octet-stream' });
+      const blob = new Blob([bytes.buffer as ArrayBuffer], {
+        type: "application/octet-stream",
+      });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
+      const a = document.createElement("a");
       a.href = url;
-      a.download = `${exam?.title || 'exam'}.bgproj`;
+      a.download = `${exam?.title || "exam"}.bgproj`;
       a.click();
       URL.revokeObjectURL(url);
       exportSuccess = true;
@@ -234,16 +295,18 @@
   async function handleDownloadExamPdf(showAnswers = false) {
     if (!exam) return;
     isCompiling = true;
-    compileNotice = '';
+    compileNotice = "";
 
     try {
-      if ($storagePolicyStore === 'server-synced') {
-        const pdfBuffer = await api.getBinary(`/exams/${exam.id}/compile?answers=${showAnswers}`);
-        const blob = new Blob([pdfBuffer], { type: 'application/pdf' });
+      if ($storagePolicyStore === "server-synced") {
+        const pdfBuffer = await api.getBinary(
+          `/exams/${exam.id}/compile?answers=${showAnswers}`,
+        );
+        const blob = new Blob([pdfBuffer], { type: "application/pdf" });
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
+        const a = document.createElement("a");
         a.href = url;
-        a.download = `${exam.title}${showAnswers ? '_Loesung' : ''}.pdf`;
+        a.download = `${exam.title}${showAnswers ? "_Loesung" : ""}.pdf`;
         a.click();
         URL.revokeObjectURL(url);
       } else {
@@ -251,18 +314,18 @@
           .map(
             (ex, idx) =>
               ex.latexBody ||
-              `\\begin{Aufgabe}{${ex.name || `Aufgabe ${idx + 1}`}}\\end{Aufgabe}`
+              `\\begin{Aufgabe}{${ex.name || `Aufgabe ${idx + 1}`}}\\end{Aufgabe}`,
           )
-          .join('\n\n');
+          .join("\n\n");
 
-        const opts = ['sans', 'punkte'];
-        if (showAnswers) opts.push('antworten');
+        const opts = ["sans", "punkte"];
+        if (showAnswers) opts.push("antworten");
 
         const fullTex = `\\documentclass[a4paper]{article}
-\\usepackage[${opts.join(',')}]{sty/Schulaufgabe}
-\\Info{${exam.infoText || ''}}
-\\Fach{${exam.fach || 'Informatik'}}
-\\Lehrernachname{${exam.lehrernachname || ''}}
+\\usepackage[${opts.join(",")}]{sty/Schulaufgabe}
+\\Info{${exam.infoText || ""}}
+\\Fach{${exam.fach || "Informatik"}}
+\\Lehrernachname{${exam.lehrernachname || ""}}
 \\usepackage{bbding}
 \\usepackage{pifont}
 \\usepackage{fontspec}
@@ -273,32 +336,36 @@
 \\neverindent
 \\WarningsOff
 \\begin{document}
-\\Testart{${exam.testart || 'Kurzarbeit'}}
-\\Klasse{${exam.klasse || ''}}
-\\Datum{${exam.datum || ''}}
-\\Nr{${exam.nr || '1'}}
+\\Testart{${exam.testart || "Kurzarbeit"}}
+\\Klasse{${exam.klasse || ""}}
+\\Datum{${exam.datum || ""}}
+\\Nr{${exam.nr || "1"}}
 
 ${exerciseInputs}
 
 \\end{document}`;
 
         const result = await compileLatex(fullTex);
-        const blob = new Blob([result.pdfBytes.buffer as ArrayBuffer], { type: 'application/pdf' });
+        const blob = new Blob([result.pdfBytes.buffer as ArrayBuffer], {
+          type: "application/pdf",
+        });
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
+        const a = document.createElement("a");
         a.href = url;
-        a.download = `${exam.title}${showAnswers ? '_Loesung' : ''}.pdf`;
+        a.download = `${exam.title}${showAnswers ? "_Loesung" : ""}.pdf`;
         a.click();
         URL.revokeObjectURL(url);
       }
 
-      exam.compilationStatus = 'compiled';
-      await db.exams.put(exam);
-      compileNotice = `Downloaded ${showAnswers ? 'Solution / Answer Key' : 'Exam PDF'}.`;
+      const key = get(sessionStore).sessionKey;
+      exam.compilationStatus = "compiled";
+      await saveExamEncrypted(exam, key);
+      compileNotice = `Downloaded ${showAnswers ? "Solution / Answer Key" : "Exam PDF"}.`;
     } catch (err: any) {
       if (exam) {
-        exam.compilationStatus = 'failed';
-        await db.exams.put(exam);
+        const key = get(sessionStore).sessionKey;
+        exam.compilationStatus = "failed";
+        await saveExamEncrypted(exam, key);
       }
       alert(`Compilation failed: ${err.message}`);
     } finally {
@@ -307,31 +374,31 @@ ${exerciseInputs}
   }
 
   let isEditingMetadata = false;
-  let editTitle = '';
-  let editTestart = '';
-  let editKlasse = '';
-  let editDatum = '';
-  let editNr = '';
-  let editFach = '';
-  let editLehrernachname = '';
-  let editInfoText = '';
-  let editRetentionUntil = '';
+  let editTitle = "";
+  let editTestart = "";
+  let editKlasse = "";
+  let editDatum = "";
+  let editNr = "";
+  let editFach = "";
+  let editLehrernachname = "";
+  let editInfoText = "";
+  let editRetentionUntil = "";
 
   let isLibraryModalOpen = false;
   let libraryExercises: ExerciseRecord[] = [];
   let selectedLibraryIds: string[] = [];
-  let librarySearch = '';
+  let librarySearch = "";
 
   function openMetadataEditor() {
     if (!exam) return;
-    editTitle = exam.title;
-    editTestart = exam.testart || 'Kurzarbeit';
-    editKlasse = exam.klasse || '';
-    editDatum = exam.datum || '';
-    editNr = exam.nr || '1';
-    editFach = exam.fach || 'Informatik';
-    editLehrernachname = exam.lehrernachname || '';
-    editInfoText = exam.infoText || '';
+    editTitle = exam.title || "";
+    editTestart = exam.testart || "Kurzarbeit";
+    editKlasse = exam.klasse || "";
+    editDatum = exam.datum || "";
+    editNr = exam.nr || "1";
+    editFach = exam.fach || "Informatik";
+    editLehrernachname = exam.lehrernachname || "";
+    editInfoText = exam.infoText || "";
     editRetentionUntil = exam.retentionUntil;
     isEditingMetadata = true;
   }
@@ -339,7 +406,7 @@ ${exerciseInputs}
   async function handleSaveMetadata() {
     if (!exam) return;
     try {
-      if ($storagePolicyStore === 'server-synced') {
+      if ($storagePolicyStore === "server-synced") {
         await api.patch(`/exams/${exam.id}`, {
           title: editTitle,
           testart: editTestart,
@@ -362,19 +429,21 @@ ${exerciseInputs}
       exam.lehrernachname = editLehrernachname;
       exam.infoText = editInfoText;
       exam.retentionUntil = editRetentionUntil;
-      await db.exams.put(exam);
+      const key = get(sessionStore).sessionKey;
+      await saveExamEncrypted(exam, key);
 
       isEditingMetadata = false;
-      alert('Exam details updated successfully.');
+      alert("Exam details updated successfully.");
     } catch (err: any) {
       alert(`Failed to save exam details: ${err.message}`);
     }
   }
 
   async function openLibraryModal() {
+    const key = get(sessionStore).sessionKey;
     try {
-      if ($storagePolicyStore === 'server-synced') {
-        const remoteExs = (await api.get('/exercises')) as any[];
+      if ($storagePolicyStore === "server-synced") {
+        const remoteExs = (await api.get("/exercises")) as any[];
         libraryExercises = remoteExs.map((e: any) => ({
           id: e.id,
           teacherId: e.teacher_id,
@@ -385,21 +454,21 @@ ${exerciseInputs}
           version: e.version || 1,
           variantKey: e.variant_key,
           isCurrent: e.is_current,
-          questionType: 'free_text',
+          questionType: "free_text",
           penalty: 0,
         }));
       } else {
-        libraryExercises = await db.exercises.toArray();
+        libraryExercises = await loadExercisesEncrypted(key);
       }
       selectedLibraryIds = exercises.map((e) => e.id);
       isLibraryModalOpen = true;
     } catch (err) {
-      console.error('Failed to load library exercises:', err);
+      console.error("Failed to load library exercises:", err);
     }
   }
 
-  function moveExerciseOrder(index: number, direction: 'up' | 'down') {
-    const targetIdx = direction === 'up' ? index - 1 : index + 1;
+  function moveExerciseOrder(index: number, direction: "up" | "down") {
+    const targetIdx = direction === "up" ? index - 1 : index + 1;
     if (targetIdx < 0 || targetIdx >= exercises.length) return;
     const copy = [...exercises];
     [copy[index], copy[targetIdx]] = [copy[targetIdx], copy[index]];
@@ -408,7 +477,9 @@ ${exerciseInputs}
   }
 
   function removeExerciseLink(id: string) {
-    exercises = exercises.filter((ex) => ex.id !== id).map((ex, idx) => ({ ...ex, orderIndex: idx + 1 }));
+    exercises = exercises
+      .filter((ex) => ex.id !== id)
+      .map((ex, idx) => ({ ...ex, orderIndex: idx + 1 }));
     saveExerciseLinks();
   }
 
@@ -416,11 +487,11 @@ ${exerciseInputs}
     if (!exam) return;
     const exerciseIds = exercises.map((e) => e.id);
     try {
-      if ($storagePolicyStore === 'server-synced') {
+      if ($storagePolicyStore === "server-synced") {
         await api.patch(`/exams/${exam.id}`, { exercise_ids: exerciseIds });
       }
 
-      await db.examExercises.where('examId').equals(exam.id).delete();
+      await db.examExercises.where("examId").equals(exam.id).delete();
       const links = exercises.map((ex, idx) => ({
         examId: exam!.id,
         exerciseId: ex.id,
@@ -428,7 +499,7 @@ ${exerciseInputs}
       }));
       await db.examExercises.bulkPut(links);
     } catch (err) {
-      console.error('Failed to update exercise links:', err);
+      console.error("Failed to update exercise links:", err);
     }
   }
 
@@ -456,8 +527,12 @@ ${exerciseInputs}
   {#if isLocalFallback}
     <div class="local-fallback-banner">
       <span>ℹ️ This exam is currently loaded from local browser storage.</span>
-      <button class="sync-now-btn" on:click={syncCurrentExamToServer} disabled={isSyncingSingle}>
-        {isSyncingSingle ? 'Syncing...' : 'Sync to Server Now'}
+      <button
+        class="sync-now-btn"
+        on:click={syncCurrentExamToServer}
+        disabled={isSyncingSingle}
+      >
+        {isSyncingSingle ? "Syncing..." : "Sync to Server Now"}
       </button>
     </div>
   {/if}
@@ -469,14 +544,23 @@ ${exerciseInputs}
       <div>
         <h2>{exam.title}</h2>
         <span class="meta">
-          {exam.testart || 'Kurzarbeit'} | Klasse: {exam.klasse || '-'} | Datum: {exam.datum || '-'} | Retention until: {exam.retentionUntil}
+          {exam.testart || "Kurzarbeit"} | Klasse: {exam.klasse || "-"} | Datum:
+          {exam.datum || "-"} | Retention until: {exam.retentionUntil}
         </span>
       </div>
       <div class="header-btns">
-        <button class="edit-btn" on:click={openMetadataEditor}>✏️ Edit Exam Details</button>
-        <button class="delete-btn" on:click={handleDeleteExam}>Delete Exam</button>
-        <button class="export-btn" on:click={handleExportArchive} disabled={isExporting}>
-          {isExporting ? 'Packing...' : 'Export .bgproj Archive'}
+        <button class="edit-btn" on:click={openMetadataEditor}
+          >✏️ Edit Exam Details</button
+        >
+        <button class="delete-btn" on:click={handleDeleteExam}
+          >Delete Exam</button
+        >
+        <button
+          class="export-btn"
+          on:click={handleExportArchive}
+          disabled={isExporting}
+        >
+          {isExporting ? "Packing..." : "Export .bgproj Archive"}
         </button>
       </div>
     </div>
@@ -511,39 +595,65 @@ ${exerciseInputs}
           </div>
           <div class="form-group">
             <label for="editLehrernachname">Lehrernachname</label>
-            <input id="editLehrernachname" type="text" bind:value={editLehrernachname} />
+            <input
+              id="editLehrernachname"
+              type="text"
+              bind:value={editLehrernachname}
+            />
           </div>
           <div class="form-group">
             <label for="editRetention">Retention Until</label>
-            <input id="editRetention" type="date" bind:value={editRetentionUntil} />
+            <input
+              id="editRetention"
+              type="date"
+              bind:value={editRetentionUntil}
+            />
           </div>
         </div>
         <div class="form-group full-width">
           <label for="editInfoText">Info Text (LaTeX list)</label>
-          <textarea id="editInfoText" rows="4" bind:value={editInfoText}></textarea>
+          <textarea id="editInfoText" rows="4" bind:value={editInfoText}
+          ></textarea>
         </div>
         <div class="editor-actions">
-          <button class="cancel-btn" on:click={() => (isEditingMetadata = false)}>Cancel</button>
-          <button class="save-btn" on:click={handleSaveMetadata}>Save Changes</button>
+          <button
+            class="cancel-btn"
+            on:click={() => (isEditingMetadata = false)}>Cancel</button
+          >
+          <button class="save-btn" on:click={handleSaveMetadata}
+            >Save Changes</button
+          >
         </div>
       </div>
     {/if}
 
     {#if exportSuccess}
-      <div class="success-banner">.bgproj archive successfully packed and downloaded.</div>
+      <div class="success-banner">
+        .bgproj archive successfully packed and downloaded.
+      </div>
     {/if}
 
     <div class="pdf-compile-section">
       <h3>LaTeX Exam Compilation & Download</h3>
-      <p class="desc">Generate printable A4 PDF exams using the Schulaufgabe template layout.</p>
+      <p class="desc">
+        Generate printable A4 PDF exams using the Schulaufgabe template layout.
+      </p>
 
       <div class="controls-row">
-        <button class="compile-btn" on:click={() => handleDownloadExamPdf(false)} disabled={isCompiling}>
-          {isCompiling ? 'Compiling...' : '📄 Download Exam PDF (Angabe)'}
+        <button
+          class="compile-btn"
+          on:click={() => handleDownloadExamPdf(false)}
+          disabled={isCompiling}
+        >
+          {isCompiling ? "Compiling..." : "📄 Download Exam PDF (Angabe)"}
         </button>
 
-        <button class="solution-btn" on:click={() => handleDownloadExamPdf(true)} disabled={isCompiling}>
-          {isCompiling ? 'Compiling...' : '📝 Download Answer Key (Lösung)'}
+        <button
+          class="solution-btn"
+          on:click={() => handleDownloadExamPdf(true)}
+          disabled={isCompiling}
+        >
+          {isCompiling ? "Compiling..." : "📝 Download Answer Key (Lösung)"}
         </button>
       </div>
 
@@ -573,18 +683,24 @@ ${exerciseInputs}
     <div class="exercises-summary">
       <div class="section-header">
         <h3>Configured Exercises ({exercises.length})</h3>
-        <button class="add-library-btn" on:click={openLibraryModal}>➕ Manage / Link Exercises</button>
+        <button class="add-library-btn" on:click={openLibraryModal}
+          >➕ Manage / Link Exercises</button
+        >
       </div>
 
       {#if exercises.length === 0}
-        <p class="empty-notice">No exercises linked to this exam yet. Click "Manage / Link Exercises" to add exercises from your library.</p>
+        <p class="empty-notice">
+          No exercises linked to this exam yet. Click "Manage / Link Exercises"
+          to add exercises from your library.
+        </p>
       {:else}
         <ul class="exercise-list">
           {#each exercises as ex, idx}
             <li class="exercise-item">
               <div class="ex-info">
                 <span class="ex-num">Question {idx + 1}:</span>
-                <span class="ex-title">{ex.name || ex.title || 'Untitled'}</span>
+                <span class="ex-title">{ex.name || ex.title || "Untitled"}</span
+                >
                 {#if ex.topicTag}
                   <span class="topic-tag">{ex.topicTag}</span>
                 {/if}
@@ -598,7 +714,7 @@ ${exerciseInputs}
                 <button
                   class="icon-btn"
                   disabled={idx === 0}
-                  on:click={() => moveExerciseOrder(idx, 'up')}
+                  on:click={() => moveExerciseOrder(idx, "up")}
                   title="Move Up"
                 >
                   ▲
@@ -606,7 +722,7 @@ ${exerciseInputs}
                 <button
                   class="icon-btn"
                   disabled={idx === exercises.length - 1}
-                  on:click={() => moveExerciseOrder(idx, 'down')}
+                  on:click={() => moveExerciseOrder(idx, "down")}
                   title="Move Down"
                 >
                   ▼
@@ -633,12 +749,14 @@ ${exerciseInputs}
     role="button"
     tabindex="-1"
     on:click|self={() => (isLibraryModalOpen = false)}
-    on:keydown|self={(e) => e.key === 'Escape' && (isLibraryModalOpen = false)}
+    on:keydown|self={(e) => e.key === "Escape" && (isLibraryModalOpen = false)}
   >
     <div class="modal-content">
       <div class="modal-header">
         <h3>Link Exercises from Library</h3>
-        <button class="close-btn" on:click={() => (isLibraryModalOpen = false)}>✕</button>
+        <button class="close-btn" on:click={() => (isLibraryModalOpen = false)}
+          >✕</button
+        >
       </div>
 
       <div class="modal-body">
@@ -650,7 +768,11 @@ ${exerciseInputs}
         />
 
         <div class="library-picker-list">
-          {#each libraryExercises.filter((ex) => !librarySearch || (ex.name && ex.name.toLowerCase().includes(librarySearch.toLowerCase())) || (ex.topicTag && ex.topicTag.toLowerCase().includes(librarySearch.toLowerCase()))) as ex}
+          {#each libraryExercises.filter((ex) => !librarySearch || (ex.name && ex.name
+                  .toLowerCase()
+                  .includes(librarySearch.toLowerCase())) || (ex.topicTag && ex.topicTag
+                  .toLowerCase()
+                  .includes(librarySearch.toLowerCase()))) as ex}
             <label class="picker-item">
               <input
                 type="checkbox"
@@ -658,10 +780,11 @@ ${exerciseInputs}
                 on:change={() => toggleLibrarySelection(ex.id)}
               />
               <div class="picker-info">
-                <strong>{ex.name || 'Untitled'}</strong>
+                <strong>{ex.name || "Untitled"}</strong>
                 <span class="meta-row">
                   {#if ex.topicTag}<span class="topic">{ex.topicTag}</span>{/if}
-                  {#if ex.variantKey}<span class="variant">{ex.variantKey}</span>{/if}
+                  {#if ex.variantKey}<span class="variant">{ex.variantKey}</span
+                    >{/if}
                   <span class="pts">{ex.maxPoints} Pkt</span>
                 </span>
               </div>
@@ -671,8 +794,12 @@ ${exerciseInputs}
       </div>
 
       <div class="modal-footer">
-        <button class="cancel-btn" on:click={() => (isLibraryModalOpen = false)}>Cancel</button>
-        <button class="save-btn" on:click={applyLibrarySelection}>Apply Linked Exercises</button>
+        <button class="cancel-btn" on:click={() => (isLibraryModalOpen = false)}
+          >Cancel</button
+        >
+        <button class="save-btn" on:click={applyLibrarySelection}
+          >Apply Linked Exercises</button
+        >
       </div>
     </div>
   </div>
@@ -806,7 +933,9 @@ ${exerciseInputs}
     border: 1px solid #334155;
     text-decoration: none;
     color: inherit;
-    transition: transform 0.15s ease, border-color 0.15s ease;
+    transition:
+      transform 0.15s ease,
+      border-color 0.15s ease;
   }
 
   .nav-card:hover {

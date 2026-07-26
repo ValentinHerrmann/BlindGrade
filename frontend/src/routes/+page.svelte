@@ -1,10 +1,12 @@
 <script lang="ts">
-  import { isUnlocked } from '$lib/stores/session';
+  import { isUnlocked, sessionStore } from '$lib/stores/session';
   import { db } from '$lib/db/db';
   import type { ExamRecord } from '$lib/db/schema';
+  import { loadExamsEncrypted, saveExamEncrypted } from '$lib/db/dbEncryption';
   import { unpackProject } from '$lib/archive/unpacker';
   import { checkRetention, type RetentionCheckResult } from '$lib/gdpr/retention';
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
 
   let exams: ExamRecord[] = [];
   let isImporting = false;
@@ -20,7 +22,8 @@
   });
 
   async function refreshExams() {
-    exams = await db.exams.toArray();
+    const key = get(sessionStore).sessionKey;
+    exams = await loadExamsEncrypted(key);
     for (const exam of exams) {
       if (exam.retentionUntil) {
         const check = checkRetention(exam.retentionUntil);
@@ -63,7 +66,8 @@
     if (!expiredExam) return;
     const newDate = new Date(Date.now() + 365 * 86400000).toISOString().split('T')[0];
     expiredExam.exam.retentionUntil = newDate;
-    await db.exams.put(expiredExam.exam);
+    const key = get(sessionStore).sessionKey;
+    await saveExamEncrypted(expiredExam.exam, key);
     expiredExam = null;
     await refreshExams();
   }

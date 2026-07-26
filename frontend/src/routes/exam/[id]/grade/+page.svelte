@@ -1,14 +1,23 @@
 <script lang="ts">
-  import { page } from '$app/stores';
-  import { onMount, tick } from 'svelte';
-  import { db } from '$lib/db/db';
-  import type { SubmissionRecord, ExerciseRecord } from '$lib/db/schema';
-  import { api } from '$lib/api/client';
-  import { sessionStore } from '$lib/stores/session';
-  import { storagePolicyStore } from '$lib/stores/storagePolicy';
-  import { decrypt, encrypt } from '$lib/crypto/aesGcm';
+  import { page } from "$app/stores";
+  import { onMount, tick } from "svelte";
+  import { db } from "$lib/db/db";
+  import type { SubmissionRecord, ExerciseRecord } from "$lib/db/schema";
+  import {
+    loadExamExercisesEncrypted,
+    loadSubmissionsEncrypted,
+    loadScoresEncrypted,
+    saveScoreEncrypted,
+    saveSubmissionEncrypted,
+    decryptSubmission,
+  } from "$lib/db/dbEncryption";
+  import { api } from "$lib/api/client";
+  import { sessionStore } from "$lib/stores/session";
+  import { storagePolicyStore } from "$lib/stores/storagePolicy";
+  import { decrypt, encrypt } from "$lib/crypto/aesGcm";
+  import { get } from "svelte/store";
 
-  const examId = $page.params.id || '';
+  const examId = $page.params.id || "";
 
   let submissions: SubmissionRecord[] = [];
   let exercises: ExerciseRecord[] = [];
@@ -20,11 +29,11 @@
   let scanCanvas: HTMLCanvasElement;
   let overlayCanvas: HTMLCanvasElement;
   let isDrawing = false;
-  let drawTool: 'pen' | 'check' | 'cross' = 'pen';
-  let penColor = '#ef4444';
+  let drawTool: "pen" | "check" | "cross" = "pen";
+  let penColor = "#ef4444";
 
   interface VectorStroke {
-    tool: 'pen' | 'check' | 'cross';
+    tool: "pen" | "check" | "cross";
     points: { x: number; y: number }[];
     color: string;
   }
@@ -38,13 +47,18 @@
   }
 
   $: {
-    totalScore = Object.values(scoreInputs).reduce((sum, val) => sum + (Number(val) || 0), 0);
+    totalScore = Object.values(scoreInputs).reduce(
+      (sum, val) => sum + (Number(val) || 0),
+      0,
+    );
   }
 
   onMount(async () => {
     if (!examId) return;
-    exercises = await db.exercises.where('examId').equals(examId).toArray();
-    submissions = await db.submissions.where('examId').equals(examId).toArray();
+    const key = get(sessionStore).sessionKey;
+    exercises = await loadExamExercisesEncrypted(examId, key);
+    const rawSubs = await db.submissions.where("examId").equals(examId).toArray();
+    submissions = await Promise.all(rawSubs.map(s => decryptSubmission(s, key)));
     if (submissions.length > 0) {
       initExerciseScores(submissions[0]);
     }
@@ -52,10 +66,13 @@
 
   async function initExerciseScores(sub: SubmissionRecord) {
     scoreInputs = {};
-    const existingScores = await db.exerciseScores.where('submissionId').equals(sub.id).toArray();
+    const key = get(sessionStore).sessionKey;
+    const existingScores = await loadScoresEncrypted(sub.id, key);
     if (existingScores.length > 0) {
       existingScores.forEach((es) => {
-        scoreInputs[es.exerciseId] = es.score;
+        if (es.score !== undefined) {
+          scoreInputs[es.exerciseId] = es.score;
+        }
       });
     } else if (sub.totalScore !== undefined) {
       const perEx = sub.totalScore / (exercises.length || 1);
@@ -73,8 +90,8 @@
     await tick();
     if (!scanCanvas || !overlayCanvas) return;
 
-    const ctx = scanCanvas.getContext('2d')!;
-    const overlayCtx = overlayCanvas.getContext('2d')!;
+    const ctx = scanCanvas.getContext("2d")!;
+    const overlayCtx = overlayCanvas.getContext("2d")!;
 
     ctx.clearRect(0, 0, scanCanvas.width, scanCanvas.height);
     overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
@@ -86,18 +103,24 @@
       scanCanvas.height = 800;
       overlayCanvas.width = 600;
       overlayCanvas.height = 800;
-      ctx.fillStyle = '#1e293b';
+      ctx.fillStyle = "#1e293b";
       ctx.fillRect(0, 0, 600, 800);
-      ctx.fillStyle = '#94a3b8';
-      ctx.font = '16px sans-serif';
-      ctx.fillText('[ Scan Image Missing / Unencrypted ]', 150, 400);
+      ctx.fillStyle = "#94a3b8";
+      ctx.font = "16px sans-serif";
+      ctx.fillText("[ Scan Image Missing / Unencrypted ]", 150, 400);
       return;
     }
 
     try {
       // Decrypt in-memory
-      const decryptedBytes = await decrypt($sessionStore.sessionKey, sub.scanCt, sub.scanIv);
-      const blob = new Blob([decryptedBytes.buffer as ArrayBuffer], { type: 'image/png' });
+      const decryptedBytes = await decrypt(
+        $sessionStore.sessionKey,
+        sub.scanCt,
+        sub.scanIv,
+      );
+      const blob = new Blob([decryptedBytes.buffer as ArrayBuffer], {
+        type: "image/png",
+      });
       const url = URL.createObjectURL(blob);
 
       const img = new Image();
@@ -112,7 +135,11 @@
 
         // Load encrypted annotations vector if available
         if (sub.annotationCt && sub.annotationIv && $sessionStore.sessionKey) {
-          decrypt($sessionStore.sessionKey, sub.annotationCt, sub.annotationIv).then((annBytes) => {
+          decrypt(
+            $sessionStore.sessionKey,
+            sub.annotationCt,
+            sub.annotationIv,
+          ).then((annBytes) => {
             const jsonStr = new TextDecoder().decode(annBytes);
             currentStrokes = JSON.parse(jsonStr);
             redrawOverlay();
@@ -121,7 +148,7 @@
       };
       img.src = url;
     } catch (err) {
-      console.error('Failed to decrypt scan for grading:', err);
+      console.error("Failed to decrypt scan for grading:", err);
     }
   }
 
@@ -133,11 +160,11 @@
     const x = (e.clientX - rect.left) * scaleX;
     const y = (e.clientY - rect.top) * scaleY;
 
-    if (drawTool === 'check' || drawTool === 'cross') {
+    if (drawTool === "check" || drawTool === "cross") {
       currentStrokes.push({
         tool: drawTool,
         points: [{ x, y }],
-        color: drawTool === 'check' ? '#22c55e' : '#ef4444',
+        color: drawTool === "check" ? "#22c55e" : "#ef4444",
       });
       redrawOverlay();
       return;
@@ -145,7 +172,7 @@
 
     isDrawing = true;
     currentStrokes.push({
-      tool: 'pen',
+      tool: "pen",
       points: [{ x, y }],
       color: penColor,
     });
@@ -170,30 +197,30 @@
 
   function redrawOverlay() {
     if (!overlayCanvas) return;
-    const ctx = overlayCanvas.getContext('2d')!;
+    const ctx = overlayCanvas.getContext("2d")!;
     ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
 
     for (const stroke of currentStrokes) {
       ctx.strokeStyle = stroke.color;
       ctx.fillStyle = stroke.color;
       ctx.lineWidth = 4;
-      ctx.lineCap = 'round';
+      ctx.lineCap = "round";
 
-      if (stroke.tool === 'pen') {
+      if (stroke.tool === "pen") {
         ctx.beginPath();
         stroke.points.forEach((p, idx) => {
           if (idx === 0) ctx.moveTo(p.x, p.y);
           else ctx.lineTo(p.x, p.y);
         });
         ctx.stroke();
-      } else if (stroke.tool === 'check') {
+      } else if (stroke.tool === "check") {
         const p = stroke.points[0];
-        ctx.font = 'bold 36px sans-serif';
-        ctx.fillText('✓', p.x, p.y);
-      } else if (stroke.tool === 'cross') {
+        ctx.font = "bold 36px sans-serif";
+        ctx.fillText("✓", p.x, p.y);
+      } else if (stroke.tool === "cross") {
         const p = stroke.points[0];
-        ctx.font = 'bold 36px sans-serif';
-        ctx.fillText('✗', p.x, p.y);
+        ctx.font = "bold 36px sans-serif";
+        ctx.fillText("✗", p.x, p.y);
       }
     }
   }
@@ -209,40 +236,45 @@
 
     try {
       currentSub.totalScore = Number(totalScore);
+      const key = get(sessionStore).sessionKey;
 
       // Save individual exercise scores
       for (const ex of exercises) {
         const scoreVal = Number(scoreInputs[ex.id]) || 0;
         const existing = await db.exerciseScores
-          .where('submissionId')
+          .where("submissionId")
           .equals(currentSub.id)
           .and((item) => item.exerciseId === ex.id)
           .first();
 
-        await db.exerciseScores.put({
+        await saveScoreEncrypted({
           id: existing ? existing.id : crypto.randomUUID(),
           submissionId: currentSub.id,
           exerciseId: ex.id,
           score: scoreVal,
-        });
+        }, key);
       }
 
       // Encrypt annotations vector layer
       if ($sessionStore.sessionKey && currentStrokes.length > 0) {
         const annJson = JSON.stringify(currentStrokes);
-        const encAnn = await encrypt($sessionStore.sessionKey, new TextEncoder().encode(annJson));
+        const encAnn = await encrypt(
+          $sessionStore.sessionKey,
+          new TextEncoder().encode(annJson),
+        );
         currentSub.annotationCt = encAnn.ciphertext;
         currentSub.annotationIv = encAnn.iv;
       }
 
-      await db.submissions.put(currentSub);
+      await saveSubmissionEncrypted(currentSub, key);
 
-      if ($storagePolicyStore === 'server-synced') {
+      if ($storagePolicyStore === "server-synced") {
         await api.patch(`/exams/${examId}/submissions/${currentSub.id}/score`, {
           total_score: Number(totalScore),
         });
       }
-      alert('Score and annotations saved successfully!');
+      sessionStore.setDirty(false);
+      alert("Score and annotations saved successfully!");
     } catch (err: any) {
       alert(`Failed to save score: ${err.message}`);
     } finally {
@@ -251,6 +283,11 @@
   }
 
   function nextStudent() {
+    if (currentStrokes.length > 0) {
+      if (!confirm("You have unsaved annotations for this student. Move to next student anyway?")) {
+        return;
+      }
+    }
     if (currentIndex < submissions.length - 1) {
       currentIndex++;
       initExerciseScores(submissions[currentIndex]);
@@ -258,6 +295,11 @@
   }
 
   function prevStudent() {
+    if (currentStrokes.length > 0) {
+      if (!confirm("You have unsaved annotations for this student. Move to previous student anyway?")) {
+        return;
+      }
+    }
     if (currentIndex > 0) {
       currentIndex--;
       initExerciseScores(submissions[currentIndex]);
@@ -271,16 +313,29 @@
   {:else}
     <div class="grading-header">
       <h2>Anonymous Student #{currentIndex + 1} of {submissions.length}</h2>
-      <span class="pseudonym-tag">HMAC ID: {currentSub.pseudonymHash.substring(0, 12)}...</span>
+      <span class="pseudonym-tag"
+        >HMAC ID: {currentSub.pseudonymHash.substring(0, 12)}...</span
+      >
     </div>
 
     <div class="grading-workspace">
       <div class="canvas-panel">
         <div class="toolbar">
-          <button class:active={drawTool === 'pen'} on:click={() => (drawTool = 'pen')}>🖊 Red Pen</button>
-          <button class:active={drawTool === 'check'} on:click={() => (drawTool = 'check')}>✓ Correct Stamp</button>
-          <button class:active={drawTool === 'cross'} on:click={() => (drawTool = 'cross')}>✗ Wrong Stamp</button>
-          <button class="clear-btn" on:click={clearAnnotations}>Clear Overlay</button>
+          <button
+            class:active={drawTool === "pen"}
+            on:click={() => (drawTool = "pen")}>🖊 Red Pen</button
+          >
+          <button
+            class:active={drawTool === "check"}
+            on:click={() => (drawTool = "check")}>✓ Correct Stamp</button
+          >
+          <button
+            class:active={drawTool === "cross"}
+            on:click={() => (drawTool = "cross")}>✗ Wrong Stamp</button
+          >
+          <button class="clear-btn" on:click={clearAnnotations}
+            >Clear Overlay</button
+          >
         </div>
 
         <div class="canvas-container">
@@ -299,7 +354,9 @@
         <h3>Exercise Scores</h3>
         {#each exercises as ex}
           <div class="ex-item">
-            <label for={`score-${ex.id}`}>Question {ex.orderIndex} ({ex.questionType}, max {ex.maxPoints} pts)</label>
+            <label for={`score-${ex.id}`}
+              >Question {ex.orderIndex} ({ex.questionType}, max {ex.maxPoints} pts)</label
+            >
             <input
               id={`score-${ex.id}`}
               type="number"
@@ -313,21 +370,36 @@
 
         <div class="total-section">
           <label for="totalScore">Calculated Total Score</label>
-          <input id="totalScore" type="number" step="0.5" value={totalScore} readonly />
-          <button class="save-btn" on:click={handleSaveScore} disabled={isSaving}>
-            {isSaving ? 'Saving...' : 'Save Grade & Annotations'}
+          <input
+            id="totalScore"
+            type="number"
+            step="0.5"
+            value={totalScore}
+            readonly
+          />
+          <button
+            class="save-btn"
+            on:click={handleSaveScore}
+            disabled={isSaving}
+          >
+            {isSaving ? "Saving..." : "Save Grade & Annotations"}
           </button>
         </div>
 
         <div class="nav-buttons">
-          <button on:click={prevStudent} disabled={currentIndex === 0}>Previous</button>
-          <button on:click={nextStudent} disabled={currentIndex === submissions.length - 1}>Next Student</button>
+          <button on:click={prevStudent} disabled={currentIndex === 0}
+            >Previous</button
+          >
+          <button
+            on:click={nextStudent}
+            disabled={currentIndex === submissions.length - 1}
+            >Next Student</button
+          >
         </div>
       </div>
     </div>
   {/if}
 </div>
-
 
 <style>
   .grading-page {
@@ -343,7 +415,10 @@
     margin-bottom: 1.5rem;
   }
 
-  h2 { margin: 0; color: #38bdf8; }
+  h2 {
+    margin: 0;
+    color: #38bdf8;
+  }
 
   .pseudonym-tag {
     background: #1e293b;
@@ -475,5 +550,9 @@
     background: #334155;
   }
 
-  .empty { text-align: center; padding: 4rem; color: #94a3b8; }
+  .empty {
+    text-align: center;
+    padding: 4rem;
+    color: #94a3b8;
+  }
 </style>

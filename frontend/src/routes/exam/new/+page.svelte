@@ -1,20 +1,22 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { db } from '$lib/db/db';
-  import { sessionStore } from '$lib/stores/session';
-  import { storagePolicyStore } from '$lib/stores/storagePolicy';
-  import type { ExerciseRecord } from '$lib/db/schema';
-  import { api } from '$lib/api/client';
-  import { parseExerciseScore } from '$lib/latex/scoreParser';
+  import { onMount } from "svelte";
+  import { db } from "$lib/db/db";
+  import { sessionStore } from "$lib/stores/session";
+  import { storagePolicyStore } from "$lib/stores/storagePolicy";
+  import type { ExerciseRecord } from "$lib/db/schema";
+  import { loadExercisesEncrypted, saveExerciseEncrypted, saveExamEncrypted, encryptExercise } from "$lib/db/dbEncryption";
+  import { api } from "$lib/api/client";
+  import { parseExerciseScore } from "$lib/latex/scoreParser";
+  import { get } from "svelte/store";
 
   // Metadata
-  let title = '';
-  let testart = 'Kurzarbeit';
-  let klasse = '10a';
-  let datum = new Date().toLocaleDateString('de-DE') + ' (30 Minuten)';
-  let nr = '1';
-  let fach = 'Informatik';
-  let lehrernachname = '';
+  let title = "";
+  let testart = "Kurzarbeit";
+  let klasse = "10a";
+  let datum = new Date().toLocaleDateString("de-DE") + " (30 Minuten)";
+  let nr = "1";
+  let fach = "Informatik";
+  let lehrernachname = "";
   let infoText = `\\begin{itemize}
     \\item Die Arbeit wird anonymisiert korrigiert. Trage deine Initialen ins QR-Code-Feld ein.
     \\item Mit Bleistift oder rot/rosa Geschriebenes kann \\textbf{nicht} gewertet werden!
@@ -24,13 +26,13 @@
   // Library & Selection state
   let libraryExercises: ExerciseRecord[] = [];
   let selectedLibraryIds: string[] = [];
-  let selectedTopicFilter: string = 'ALL';
-  let searchQuery: string = '';
-  let activeTab: 'library' | 'custom' = 'library';
+  let selectedTopicFilter: string = "ALL";
+  let searchQuery: string = "";
+  let activeTab: "library" | "custom" = "library";
 
   // Inline custom exercise form
-  let customName = 'Custom_Exercise';
-  let customTopicTag = '_General';
+  let customName = "Custom_Exercise";
+  let customTopicTag = "_General";
   let customLatexBody = `\\begin{Aufgabe}{Eigene Aufgabe}
 Frage hier eingeben... \\BE
 \\end{Aufgabe}`;
@@ -38,16 +40,21 @@ Frage hier eingeben... \\BE
 
   // State
   let isLoading = false;
-  let errorMsg = '';
+  let errorMsg = "";
   let previewPdfUrl: string | null = null;
   let isPreviewLoading = false;
 
   $: availableTopics = Array.from(
-    new Set(libraryExercises.map((e) => e.topicTag).filter((t): t is string => Boolean(t)))
+    new Set(
+      libraryExercises
+        .map((e) => e.topicTag)
+        .filter((t): t is string => Boolean(t)),
+    ),
   ).sort();
 
   $: filteredLibrary = libraryExercises.filter((ex) => {
-    const matchesTopic = selectedTopicFilter === 'ALL' || ex.topicTag === selectedTopicFilter;
+    const matchesTopic =
+      selectedTopicFilter === "ALL" || ex.topicTag === selectedTopicFilter;
     const q = searchQuery.toLowerCase().trim();
     const matchesSearch =
       !q ||
@@ -62,8 +69,8 @@ Frage hier eingeben... \\BE
     .filter((e): e is ExerciseRecord => Boolean(e));
 
   $: totalPoints = selectedExercises.reduce(
-    (sum, ex) => sum + parseExerciseScore(ex.latexBody || ''),
-    0
+    (sum, ex) => sum + parseExerciseScore(ex.latexBody || ""),
+    0,
   );
 
   onMount(() => {
@@ -71,10 +78,11 @@ Frage hier eingeben... \\BE
   });
 
   async function loadLibrary() {
+    const key = get(sessionStore).sessionKey;
     try {
-      if ($storagePolicyStore === 'server-synced') {
+      if ($storagePolicyStore === "server-synced") {
         try {
-          const remoteExs = (await api.get('/exercises')) as any[];
+          const remoteExs = (await api.get("/exercises")) as any[];
           libraryExercises = remoteExs.map((e: any) => ({
             id: e.id,
             teacherId: e.teacher_id,
@@ -83,19 +91,20 @@ Frage hier eingeben... \\BE
             latexBody: e.latex_body,
             maxPoints: e.max_points,
             version: e.version || 1,
-            questionType: 'free_text',
+            questionType: "free_text",
             penalty: 0,
           }));
-          await db.exercises.bulkPut(libraryExercises);
+          const encryptedExs = await Promise.all(libraryExercises.map(ex => encryptExercise(ex, key)));
+          await db.exercises.bulkPut(encryptedExs);
         } catch (apiErr) {
-          console.warn('Failed to fetch remote library, using IDB:', apiErr);
-          libraryExercises = await db.exercises.toArray();
+          console.warn("Failed to fetch remote library, using IDB:", apiErr);
+          libraryExercises = await loadExercisesEncrypted(key);
         }
       } else {
-        libraryExercises = await db.exercises.toArray();
+        libraryExercises = await loadExercisesEncrypted(key);
       }
     } catch (err) {
-      console.error('Failed to load exercise library:', err);
+      console.error("Failed to load exercise library:", err);
     }
   }
 
@@ -107,8 +116,8 @@ Frage hier eingeben... \\BE
     }
   }
 
-  function moveExercise(index: number, direction: 'up' | 'down') {
-    const targetIdx = direction === 'up' ? index - 1 : index + 1;
+  function moveExercise(index: number, direction: "up" | "down") {
+    const targetIdx = direction === "up" ? index - 1 : index + 1;
     if (targetIdx < 0 || targetIdx >= selectedLibraryIds.length) return;
     const copy = [...selectedLibraryIds];
     [copy[index], copy[targetIdx]] = [copy[targetIdx], copy[index]];
@@ -117,36 +126,37 @@ Frage hier eingeben... \\BE
 
   async function handleAddCustomExercise() {
     if (!customName.trim()) {
-      alert('Exercise name is required.');
+      alert("Exercise name is required.");
       return;
     }
 
     const computedScore = parseExerciseScore(customLatexBody);
     const newEx: ExerciseRecord = {
       id: crypto.randomUUID(),
-      teacherId: $sessionStore.email || 'local-teacher',
+      teacherId: $sessionStore.email || "local-teacher",
       name: customName,
       topicTag: customTopicTag,
       latexBody: customLatexBody,
       maxPoints: computedScore,
       version: 1,
-      questionType: 'free_text',
+      questionType: "free_text",
       penalty: 0,
       createdAt: new Date().toISOString(),
     };
 
     if (saveCustomToLibrary) {
-      await db.exercises.put(newEx);
-      if ($storagePolicyStore === 'server-synced') {
+      const key = get(sessionStore).sessionKey;
+      await saveExerciseEncrypted(newEx, key);
+      if ($storagePolicyStore === "server-synced") {
         try {
-          await api.post('/exercises', {
+          await api.post("/exercises", {
             id: newEx.id,
             name: newEx.name,
             topic_tag: newEx.topicTag,
             latex_body: newEx.latexBody,
           });
         } catch (apiErr) {
-          console.warn('Failed to sync new exercise to server:', apiErr);
+          console.warn("Failed to sync new exercise to server:", apiErr);
         }
       }
       libraryExercises = [...libraryExercises, newEx];
@@ -155,21 +165,23 @@ Frage hier eingeben... \\BE
     }
 
     selectedLibraryIds = [...selectedLibraryIds, newEx.id];
-    activeTab = 'library';
+    activeTab = "library";
   }
 
   async function handleLivePreview() {
     if (selectedExercises.length === 0) {
-      alert('Please select at least one exercise to preview.');
+      alert("Please select at least one exercise to preview.");
       return;
     }
 
     isPreviewLoading = true;
-    errorMsg = '';
+    errorMsg = "";
     try {
       const exerciseInputs = selectedExercises
-        .map((ex) => ex.latexBody || `\\begin{Aufgabe}{${ex.name}}\\end{Aufgabe}`)
-        .join('\n\n');
+        .map(
+          (ex) => ex.latexBody || `\\begin{Aufgabe}{${ex.name}}\\end{Aufgabe}`,
+        )
+        .join("\n\n");
 
       const fullTex = `\\documentclass[a4paper]{article}
 \\usepackage[sans,punkte]{sty/Schulaufgabe}
@@ -195,12 +207,14 @@ ${exerciseInputs}
 
 \\end{document}`;
 
-      const pdfBuffer = await api.postJsonForBinary('/compile/latex', { latex: fullTex });
-      const blob = new Blob([pdfBuffer], { type: 'application/pdf' });
+      const pdfBuffer = await api.postJsonForBinary("/compile/latex", {
+        latex: fullTex,
+      });
+      const blob = new Blob([pdfBuffer], { type: "application/pdf" });
       if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
       previewPdfUrl = URL.createObjectURL(blob);
     } catch (err: any) {
-      errorMsg = err.message || 'Preview compilation failed.';
+      errorMsg = err.message || "Preview compilation failed.";
     } finally {
       isPreviewLoading = false;
     }
@@ -208,23 +222,26 @@ ${exerciseInputs}
 
   async function handleCreateExam() {
     if (!title.trim()) {
-      errorMsg = 'Exam title is required.';
+      errorMsg = "Exam title is required.";
       return;
     }
     if (selectedLibraryIds.length === 0) {
-      errorMsg = 'Please select at least one exercise for the exam.';
+      errorMsg = "Please select at least one exercise for the exam.";
       return;
     }
 
     isLoading = true;
-    errorMsg = '';
+    errorMsg = "";
     const examId = crypto.randomUUID();
-    const retentionUntil = new Date(Date.now() + retentionDays * 86400000).toISOString().split('T')[0];
+    const retentionUntil = new Date(Date.now() + retentionDays * 86400000)
+      .toISOString()
+      .split("T")[0];
 
     try {
-      await db.exams.add({
+      const key = get(sessionStore).sessionKey;
+      await saveExamEncrypted({
         id: examId,
-        teacherId: $sessionStore.email || 'local-teacher',
+        teacherId: $sessionStore.email || "local-teacher",
         title,
         testart,
         klasse,
@@ -234,9 +251,9 @@ ${exerciseInputs}
         lehrernachname,
         infoText,
         retentionUntil,
-        compilationStatus: 'pending',
+        compilationStatus: "pending",
         createdAt: new Date().toISOString(),
-      });
+      }, key);
 
       // Save junction links in IDB
       const examExerciseRecords = selectedLibraryIds.map((exId, idx) => ({
@@ -246,9 +263,9 @@ ${exerciseInputs}
       }));
       await db.examExercises.bulkPut(examExerciseRecords);
 
-      if ($storagePolicyStore === 'server-synced') {
+      if ($storagePolicyStore === "server-synced") {
         try {
-          await api.post('/exams', {
+          await api.post("/exams", {
             id: examId,
             title,
             testart,
@@ -262,13 +279,13 @@ ${exerciseInputs}
             exercise_ids: selectedLibraryIds,
           });
         } catch (apiErr) {
-          console.warn('Failed to sync exam to server:', apiErr);
+          console.warn("Failed to sync exam to server:", apiErr);
         }
       }
 
       window.location.href = `/exam/${examId}`;
     } catch (err: any) {
-      errorMsg = err.message || 'Failed to create exam.';
+      errorMsg = err.message || "Failed to create exam.";
     } finally {
       isLoading = false;
     }
@@ -289,18 +306,36 @@ ${exerciseInputs}
 
       <div class="form-group">
         <label for="title">Exam Title</label>
-        <input id="title" type="text" bind:value={title} placeholder="e.g. 2. Kurzarbeit 10a Informatik" required />
+        <input
+          id="title"
+          type="text"
+          bind:value={title}
+          placeholder="e.g. 2. Kurzarbeit 10a Informatik"
+          required
+        />
       </div>
 
       <div class="form-grid-3">
         <div class="form-group">
           <label for="testart">Testart (\\Testart)</label>
-          <input id="testart" type="text" bind:value={testart} placeholder="Kurzarbeit" required />
+          <input
+            id="testart"
+            type="text"
+            bind:value={testart}
+            placeholder="Kurzarbeit"
+            required
+          />
         </div>
 
         <div class="form-group">
           <label for="klasse">Klasse (\\Klasse)</label>
-          <input id="klasse" type="text" bind:value={klasse} placeholder="10a" required />
+          <input
+            id="klasse"
+            type="text"
+            bind:value={klasse}
+            placeholder="10a"
+            required
+          />
         </div>
 
         <div class="form-group">
@@ -312,17 +347,35 @@ ${exerciseInputs}
       <div class="form-grid-3">
         <div class="form-group">
           <label for="datum">Datum & Dauer (\\Datum)</label>
-          <input id="datum" type="text" bind:value={datum} placeholder="20.05.2025 (30 Min)" required />
+          <input
+            id="datum"
+            type="text"
+            bind:value={datum}
+            placeholder="20.05.2025 (30 Min)"
+            required
+          />
         </div>
 
         <div class="form-group">
           <label for="fach">Fach (\\Fach)</label>
-          <input id="fach" type="text" bind:value={fach} placeholder="Informatik" required />
+          <input
+            id="fach"
+            type="text"
+            bind:value={fach}
+            placeholder="Informatik"
+            required
+          />
         </div>
 
         <div class="form-group">
           <label for="lehrer">Lehrer Nachname (\\Lehrernachname)</label>
-          <input id="lehrer" type="text" bind:value={lehrernachname} placeholder="Her" required />
+          <input
+            id="lehrer"
+            type="text"
+            bind:value={lehrernachname}
+            placeholder="Her"
+            required
+          />
         </div>
       </div>
 
@@ -340,23 +393,23 @@ ${exerciseInputs}
           <button
             type="button"
             class="tab-btn"
-            class:active={activeTab === 'library'}
-            on:click={() => (activeTab = 'library')}
+            class:active={activeTab === "library"}
+            on:click={() => (activeTab = "library")}
           >
             📚 From Library ({selectedLibraryIds.length} Selected)
           </button>
           <button
             type="button"
             class="tab-btn"
-            class:active={activeTab === 'custom'}
-            on:click={() => (activeTab = 'custom')}
+            class:active={activeTab === "custom"}
+            on:click={() => (activeTab = "custom")}
           >
             ✏️ Create Custom Exercise
           </button>
         </div>
       </div>
 
-      {#if activeTab === 'library'}
+      {#if activeTab === "library"}
         <div class="filter-row">
           <input
             type="text"
@@ -368,8 +421,8 @@ ${exerciseInputs}
             <button
               type="button"
               class="pill"
-              class:active={selectedTopicFilter === 'ALL'}
-              on:click={() => (selectedTopicFilter = 'ALL')}
+              class:active={selectedTopicFilter === "ALL"}
+              on:click={() => (selectedTopicFilter = "ALL")}
             >
               All
             </button>
@@ -387,12 +440,14 @@ ${exerciseInputs}
         </div>
 
         {#if filteredLibrary.length === 0}
-          <div class="empty-hint">No exercises found in library matching filter.</div>
+          <div class="empty-hint">
+            No exercises found in library matching filter.
+          </div>
         {:else}
           <div class="library-checklist">
             {#each filteredLibrary as ex}
               {@const isSelected = selectedLibraryIds.includes(ex.id)}
-              {@const score = parseExerciseScore(ex.latexBody || '')}
+              {@const score = parseExerciseScore(ex.latexBody || "")}
               <div class="library-item" class:selected={isSelected}>
                 <label class="item-label">
                   <input
@@ -416,17 +471,34 @@ ${exerciseInputs}
           <div class="form-grid">
             <div class="form-group">
               <label for="customName">Exercise Name</label>
-              <input id="customName" type="text" bind:value={customName} placeholder="Custom_1" />
+              <input
+                id="customName"
+                type="text"
+                bind:value={customName}
+                placeholder="Custom_1"
+              />
             </div>
             <div class="form-group">
               <label for="customTopic">Topic Tag</label>
-              <input id="customTopic" type="text" bind:value={customTopicTag} placeholder="_Vererbung" />
+              <input
+                id="customTopic"
+                type="text"
+                bind:value={customTopicTag}
+                placeholder="_Vererbung"
+              />
             </div>
           </div>
 
           <div class="form-group">
-            <label for="customBody">LaTeX Body (\\begin&#123;Aufgabe&#125;...)</label>
-            <textarea id="customBody" rows="6" class="code-editor" bind:value={customLatexBody}></textarea>
+            <label for="customBody"
+              >LaTeX Body (\\begin&#123;Aufgabe&#125;...)</label
+            >
+            <textarea
+              id="customBody"
+              rows="6"
+              class="code-editor"
+              bind:value={customLatexBody}
+            ></textarea>
           </div>
 
           <div class="custom-actions">
@@ -434,7 +506,11 @@ ${exerciseInputs}
               <input type="checkbox" bind:checked={saveCustomToLibrary} />
               Save to Exercise Library for future exams
             </label>
-            <button type="button" class="add-custom-btn" on:click={handleAddCustomExercise}>
+            <button
+              type="button"
+              class="add-custom-btn"
+              on:click={handleAddCustomExercise}
+            >
               + Add to Exam
             </button>
           </div>
@@ -445,23 +521,28 @@ ${exerciseInputs}
     <!-- Selected Exercises Reorder & Summary -->
     <div class="section-card">
       <div class="section-header">
-        <h3>3. Exam Structure ({selectedExercises.length} Exercises | Total: {totalPoints} Pkt)</h3>
+        <h3>
+          3. Exam Structure ({selectedExercises.length} Exercises | Total: {totalPoints}
+          Pkt)
+        </h3>
         <button
           type="button"
           class="preview-btn"
           on:click={handleLivePreview}
           disabled={isPreviewLoading || selectedExercises.length === 0}
         >
-          {isPreviewLoading ? 'Compiling Preview...' : '🔍 Live Preview PDF'}
+          {isPreviewLoading ? "Compiling Preview..." : "🔍 Live Preview PDF"}
         </button>
       </div>
 
       {#if selectedExercises.length === 0}
-        <div class="empty-hint">No exercises selected yet. Pick exercises from the library above.</div>
+        <div class="empty-hint">
+          No exercises selected yet. Pick exercises from the library above.
+        </div>
       {:else}
         <div class="selected-list">
           {#each selectedExercises as ex, idx}
-            {@const score = parseExerciseScore(ex.latexBody || '')}
+            {@const score = parseExerciseScore(ex.latexBody || "")}
             <div class="selected-item">
               <div class="item-info">
                 <span class="order-num">({idx + 1})</span>
@@ -476,7 +557,7 @@ ${exerciseInputs}
                   type="button"
                   class="order-btn"
                   disabled={idx === 0}
-                  on:click={() => moveExercise(idx, 'up')}
+                  on:click={() => moveExercise(idx, "up")}
                 >
                   ▲
                 </button>
@@ -484,7 +565,7 @@ ${exerciseInputs}
                   type="button"
                   class="order-btn"
                   disabled={idx === selectedExercises.length - 1}
-                  on:click={() => moveExercise(idx, 'down')}
+                  on:click={() => moveExercise(idx, "down")}
                 >
                   ▼
                 </button>
@@ -505,12 +586,21 @@ ${exerciseInputs}
     {#if previewPdfUrl}
       <div class="preview-container">
         <h4>Complete Exam PDF Live Preview</h4>
-        <iframe src={previewPdfUrl} title="LaTeX Exam Preview" width="100%" height="500px"></iframe>
+        <iframe
+          src={previewPdfUrl}
+          title="LaTeX Exam Preview"
+          width="100%"
+          height="500px"
+        ></iframe>
       </div>
     {/if}
 
-    <button type="submit" class="submit-btn" disabled={isLoading || selectedExercises.length === 0}>
-      {isLoading ? 'Creating Exam...' : 'Save Exam & Continue'}
+    <button
+      type="submit"
+      class="submit-btn"
+      disabled={isLoading || selectedExercises.length === 0}
+    >
+      {isLoading ? "Creating Exam..." : "Save Exam & Continue"}
     </button>
   </form>
 </div>
@@ -572,7 +662,8 @@ ${exerciseInputs}
     color: #cbd5e1;
   }
 
-  input, textarea {
+  input,
+  textarea {
     padding: 0.625rem;
     background: #0f172a;
     border: 1px solid #334155;
@@ -581,7 +672,7 @@ ${exerciseInputs}
   }
 
   .code-editor {
-    font-family: 'Fira Code', 'Courier New', Courier, monospace;
+    font-family: "Fira Code", "Courier New", Courier, monospace;
     font-size: 0.9rem;
   }
 
