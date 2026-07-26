@@ -41,12 +41,229 @@
   let diffRightId: string = "";
   let diffGroupExercises: ExerciseRecord[] = [];
 
+  interface DiffLine {
+    lineNumber?: number;
+    text: string;
+    type: "added" | "removed" | "unchanged" | "empty";
+  }
+
+  function stringSimilarity(str1: string, str2: string): number {
+    if (str1 === str2) return 1.0;
+    if (!str1 || !str2) return 0.0;
+
+    const s1 = str1.trim();
+    const s2 = str2.trim();
+    if (s1 === s2) return 0.98;
+
+    const len1 = s1.length;
+    const len2 = s2.length;
+    const maxLen = Math.max(len1, len2);
+    if (maxLen === 0) return 1.0;
+
+    const matrix: number[] = new Array(len2 + 1);
+    for (let j = 0; j <= len2; j++) matrix[j] = j;
+
+    for (let i = 1; i <= len1; i++) {
+      let prev = i;
+      for (let j = 1; j <= len2; j++) {
+        const cost = s1[i - 1] === s2[j - 1] ? 0 : 1;
+        const current = Math.min(
+          matrix[j] + 1,
+          prev + 1,
+          matrix[j - 1] + cost,
+        );
+        matrix[j - 1] = prev;
+        prev = current;
+      }
+      matrix[len2] = prev;
+    }
+
+    return 1.0 - matrix[len2] / maxLen;
+  }
+
+  function computeSideBySideDiff(
+    leftText: string,
+    rightText: string,
+  ): { leftLines: DiffLine[]; rightLines: DiffLine[] } {
+    const a = (leftText || "")
+      .replace(/\r\n/g, "\n")
+      .replace(/\n$/, "")
+      .split("\n");
+    const b = (rightText || "")
+      .replace(/\r\n/g, "\n")
+      .replace(/\n$/, "")
+      .split("\n");
+
+    if (a.length === 1 && a[0] === "") a.pop();
+    if (b.length === 1 && b[0] === "") b.pop();
+
+    const N = a.length;
+    const M = b.length;
+
+    if (N === 0 && M === 0) {
+      return { leftLines: [], rightLines: [] };
+    }
+
+    if (N === 0) {
+      const rightLines = b.map((line, idx) => ({
+        lineNumber: idx + 1,
+        text: line,
+        type: "added" as const,
+      }));
+      const leftLines = b.map(() => ({ text: "", type: "empty" as const }));
+      return { leftLines, rightLines };
+    }
+
+    if (M === 0) {
+      const leftLines = a.map((line, idx) => ({
+        lineNumber: idx + 1,
+        text: line,
+        type: "removed" as const,
+      }));
+      const rightLines = a.map(() => ({ text: "", type: "empty" as const }));
+      return { leftLines, rightLines };
+    }
+
+    const simMatrix: number[][] = Array.from({ length: N }, () =>
+      new Array(M).fill(0),
+    );
+    for (let i = 0; i < N; i++) {
+      for (let j = 0; j < M; j++) {
+        simMatrix[i][j] = stringSimilarity(a[i], b[j]);
+      }
+    }
+
+    const GAP_PENALTY = -0.4;
+    const dp: number[][] = Array.from({ length: N + 1 }, () =>
+      new Array(M + 1).fill(0),
+    );
+
+    for (let i = 0; i <= N; i++) dp[i][0] = i * GAP_PENALTY;
+    for (let j = 0; j <= M; j++) dp[0][j] = j * GAP_PENALTY;
+
+    for (let i = 1; i <= N; i++) {
+      for (let j = 1; j <= M; j++) {
+        const sim = simMatrix[i - 1][j - 1];
+        let matchScore: number;
+        if (sim === 1.0) {
+          matchScore = 2.0;
+        } else if (sim >= 0.35) {
+          matchScore = 2.0 * sim;
+        } else {
+          matchScore = -0.8;
+        }
+
+        const scoreDiag = dp[i - 1][j - 1] + matchScore;
+        const scoreUp = dp[i - 1][j] + GAP_PENALTY;
+        const scoreLeft = dp[i][j - 1] + GAP_PENALTY;
+
+        dp[i][j] = Math.max(scoreDiag, scoreUp, scoreLeft);
+      }
+    }
+
+    const ops: Array<{
+      op: "MATCH" | "MODIFY" | "DELETE" | "INSERT";
+      i: number;
+      j: number;
+    }> = [];
+    let i = N;
+    let j = M;
+
+    while (i > 0 || j > 0) {
+      if (i > 0 && j > 0) {
+        const sim = simMatrix[i - 1][j - 1];
+        let matchScore: number;
+        if (sim === 1.0) {
+          matchScore = 2.0;
+        } else if (sim >= 0.35) {
+          matchScore = 2.0 * sim;
+        } else {
+          matchScore = -0.8;
+        }
+
+        if (dp[i][j] === dp[i - 1][j - 1] + matchScore) {
+          const opType =
+            sim === 1.0 ? "MATCH" : sim >= 0.35 ? "MODIFY" : "DELETE";
+          if (opType !== "DELETE") {
+            ops.push({ op: opType, i: i - 1, j: j - 1 });
+            i--;
+            j--;
+            continue;
+          }
+        }
+      }
+
+      if (i > 0 && dp[i][j] === dp[i - 1][j] + GAP_PENALTY) {
+        ops.push({ op: "DELETE", i: i - 1, j: -1 });
+        i--;
+      } else if (j > 0 && dp[i][j] === dp[i][j - 1] + GAP_PENALTY) {
+        ops.push({ op: "INSERT", i: -1, j: j - 1 });
+        j--;
+      } else {
+        if (i > 0) {
+          ops.push({ op: "DELETE", i: i - 1, j: -1 });
+          i--;
+        } else {
+          ops.push({ op: "INSERT", i: -1, j: j - 1 });
+          j--;
+        }
+      }
+    }
+
+    ops.reverse();
+
+    const leftLines: DiffLine[] = [];
+    const rightLines: DiffLine[] = [];
+    let leftLineNum = 1;
+    let rightLineNum = 1;
+
+    for (const op of ops) {
+      if (op.op === "MATCH") {
+        leftLines.push({
+          lineNumber: leftLineNum++,
+          text: a[op.i],
+          type: "unchanged",
+        });
+        rightLines.push({
+          lineNumber: rightLineNum++,
+          text: b[op.j],
+          type: "unchanged",
+        });
+      } else if (op.op === "MODIFY") {
+        leftLines.push({
+          lineNumber: leftLineNum++,
+          text: a[op.i],
+          type: "removed",
+        });
+        rightLines.push({
+          lineNumber: rightLineNum++,
+          text: b[op.j],
+          type: "added",
+        });
+      } else if (op.op === "DELETE") {
+        leftLines.push({
+          lineNumber: leftLineNum++,
+          text: a[op.i],
+          type: "removed",
+        });
+        rightLines.push({ text: "", type: "empty" });
+      } else if (op.op === "INSERT") {
+        leftLines.push({ text: "", type: "empty" });
+        rightLines.push({
+          lineNumber: rightLineNum++,
+          text: b[op.j],
+          type: "added",
+        });
+      }
+    }
+
+    return { leftLines, rightLines };
+  }
+
   $: diffLeftEx = exercises.find((e) => e.id === diffLeftId) || diffGroupExercises.find((e) => e.id === diffLeftId);
   $: diffRightEx = exercises.find((e) => e.id === diffRightId) || diffGroupExercises.find((e) => e.id === diffRightId);
 
-  $: diffResult = (diffLeftEx && diffRightEx)
-    ? diffLines(diffLeftEx.latexBody || "", diffRightEx.latexBody || "")
-    : [];
+  $: sideBySideDiff = computeSideBySideDiff(diffLeftEx?.latexBody || "", diffRightEx?.latexBody || "");
 
   // Preview state
   let isPreviewLoading = false;
@@ -900,17 +1117,27 @@ ${editorLatexBody}
         <div class="diff-panes">
           <div class="diff-pane">
             <h4>Left: {diffLeftEx?.name || "Original"} (v{diffLeftEx?.version || 1})</h4>
-            <LatexEditor value={diffLeftEx?.latexBody || ""} readonly={true} rows={8} />
+            <div class="code-diff-container">
+              {#each sideBySideDiff.leftLines as line}
+                <div class="diff-line {line.type}">
+                  <span class="line-num">{line.lineNumber ?? ""}</span>
+                  <span class="line-content">{line.text}</span>
+                </div>
+              {/each}
+            </div>
           </div>
+
           <div class="diff-pane">
             <h4>Right: {diffRightEx?.name || "Compared"} (v{diffRightEx?.version || 1})</h4>
-            <LatexEditor value={diffRightEx?.latexBody || ""} readonly={true} rows={8} />
+            <div class="code-diff-container">
+              {#each sideBySideDiff.rightLines as line}
+                <div class="diff-line {line.type}">
+                  <span class="line-num">{line.lineNumber ?? ""}</span>
+                  <span class="line-content">{line.text}</span>
+                </div>
+              {/each}
+            </div>
           </div>
-        </div>
-
-        <div class="unified-diff-box">
-          <h4>Line-by-Line Unified Diff</h4>
-          <pre class="diff-code">{#each diffResult as part}<span class={part.added ? "diff-added" : part.removed ? "diff-removed" : "diff-unchanged"}>{part.value}</span>{/each}</pre>
         </div>
       </div>
 
@@ -1381,7 +1608,7 @@ ${editorLatexBody}
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 1rem;
-    margin-bottom: 1.5rem;
+    margin-bottom: 1rem;
   }
 
   .diff-pane h4 {
@@ -1390,40 +1617,70 @@ ${editorLatexBody}
     font-size: 0.9rem;
   }
 
-  .unified-diff-box {
+  .code-diff-container {
     background: #0f172a;
-    padding: 1rem;
-    border-radius: 8px;
     border: 1px solid #334155;
-  }
-
-  .unified-diff-box h4 {
-    margin: 0 0 0.5rem 0;
-    color: #38bdf8;
-  }
-
-  .diff-code {
+    border-radius: 8px;
     font-family: "Fira Code", monospace;
     font-size: 0.85rem;
-    margin: 0;
+    line-height: 1.5;
+    max-height: 450px;
+    overflow-y: auto;
+    overflow-x: auto;
+    padding: 0.5rem 0;
+  }
+
+  .diff-line {
+    display: flex;
+    min-height: 1.5rem;
+    padding: 0 0.5rem;
     white-space: pre-wrap;
     word-break: break-all;
-    max-height: 250px;
-    overflow-y: auto;
   }
 
-  .diff-added {
-    background: rgba(34, 197, 94, 0.25);
-    color: #86efac;
+  .line-num {
+    display: inline-block;
+    width: 2.2rem;
+    min-width: 2.2rem;
+    color: #64748b;
+    font-size: 0.75rem;
+    user-select: none;
+    text-align: right;
+    padding-right: 0.6rem;
+    border-right: 1px solid #1e293b;
+    margin-right: 0.6rem;
   }
 
-  .diff-removed {
-    background: rgba(239, 68, 68, 0.25);
+  .line-content {
+    flex: 1;
+  }
+
+  .diff-line.removed {
+    background: rgba(239, 68, 68, 0.2);
     color: #fca5a5;
   }
 
-  .diff-unchanged {
-    color: #94a3b8;
+  .diff-line.removed .line-num {
+    color: #f87171;
+    border-right-color: rgba(239, 68, 68, 0.3);
+  }
+
+  .diff-line.added {
+    background: rgba(34, 197, 94, 0.2);
+    color: #86efac;
+  }
+
+  .diff-line.added .line-num {
+    color: #4ade80;
+    border-right-color: rgba(34, 197, 94, 0.3);
+  }
+
+  .diff-line.unchanged {
+    color: #cbd5e1;
+  }
+
+  .diff-line.empty {
+    background: rgba(15, 23, 42, 0.5);
   }
 
   .desc-text {
