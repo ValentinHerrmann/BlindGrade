@@ -2,6 +2,11 @@
   import { onMount } from "svelte";
   import { registerHygieneListeners } from "$lib/db/hygiene";
   import { sessionStore, isUnlocked } from "$lib/stores/session";
+  import {
+    storagePolicyStore,
+    storagePolicyLabelStore,
+    storagePolicyBadgeStore,
+  } from "$lib/stores/storagePolicy";
 
   onMount(() => {
     registerHygieneListeners();
@@ -22,13 +27,15 @@
       <nav class="nav-links">
         <a href="/">Dashboard</a>
         <a href="/exercises">Exercise Library</a>
-        {#if $sessionStore.mode === "hybrid" && $sessionStore.role === "admin"}
+        {#if $sessionStore.role === "admin"}
           <a href="/admin/users">User Management</a>
         {/if}
         <a href="/settings">Settings</a>
       </nav>
       <div class="session-info">
-        <span class="mode-badge">{$sessionStore.mode} mode</span>
+        {#if $sessionStore.role}
+          <span class="mode-badge">{$sessionStore.role}</span>
+        {/if}
         {#if $sessionStore.email}
           <span class="user-email">{$sessionStore.email}</span>
         {/if}
@@ -40,6 +47,19 @@
   <main class="app-main">
     <slot />
   </main>
+
+  <footer class="vscode-statusbar">
+    <a
+      href={$isUnlocked ? "/settings#storage-policy" : "/unlock"}
+      class="statusbar-item"
+      title={$isUnlocked
+        ? `Click to change data storage mode: ${$storagePolicyLabelStore}`
+        : "Session locked — Click to unlock"}
+    >
+      <span class="statusbar-icon">{$storagePolicyBadgeStore.icon}</span>
+      <span class="statusbar-label">{$storagePolicyLabelStore}</span>
+    </a>
+  </footer>
 </div>
 
 <style>
@@ -60,7 +80,8 @@
   .app-layout {
     display: flex;
     flex-direction: column;
-    min-height: 100vh;
+    height: 100vh;
+    overflow: hidden;
   }
 
   .app-header {
@@ -70,6 +91,7 @@
     padding: 0.75rem 1.5rem;
     background: #1e293b;
     border-bottom: 1px solid #334155;
+    flex-shrink: 0;
   }
 
   .brand a {
@@ -131,5 +153,33 @@
 
   .app-main {
     flex: 1;
+    overflow-y: auto;
+  }
+
+  .vscode-statusbar {
+    display: flex;
+    align-items: center;
+    padding: 0.25rem 1rem;
+    background: #007acc;
+    color: #ffffff;
+    font-size: 0.75rem;
+    font-weight: 500;
+    font-family: Menlo, Monaco, Consolas, "Courier New", monospace;
+    flex-shrink: 0;
+  }
+
+  .statusbar-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    color: #ffffff;
+    text-decoration: none;
+    padding: 0.15rem 0.4rem;
+    border-radius: 3px;
+    transition: background 0.15s ease;
+  }
+
+  .statusbar-item:hover {
+    background: rgba(255, 255, 255, 0.2);
   }
 </style>

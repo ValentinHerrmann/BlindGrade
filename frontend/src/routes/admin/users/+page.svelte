@@ -15,7 +15,6 @@
 
     $: canAccess =
         $isUnlocked &&
-        $sessionStore.mode === "hybrid" &&
         $sessionStore.role === "admin";
 
     onMount(() => {
@@ -39,7 +38,7 @@
         successMsg = "";
 
         if (!canAccess) {
-            errorMsg = "Admin access is required in Hybrid mode.";
+            errorMsg = "Admin access is required.";
             return;
         }
 
@@ -92,10 +91,6 @@
         <div class="state-card">
             <p>Session is locked. Unlock to continue.</p>
             <a href="/unlock" class="primary-link">Go to Unlock</a>
-        </div>
-    {:else if $sessionStore.mode !== "hybrid"}
-        <div class="state-card warning">
-            <p>This page is available only in Hybrid Server Mode.</p>
         </div>
     {:else if $sessionStore.role !== "admin"}
         <div class="state-card danger">

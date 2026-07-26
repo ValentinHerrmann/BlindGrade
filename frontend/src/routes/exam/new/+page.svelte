@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { db } from '$lib/db/db';
   import { sessionStore } from '$lib/stores/session';
+  import { storagePolicyStore } from '$lib/stores/storagePolicy';
   import type { ExerciseRecord } from '$lib/db/schema';
   import { api } from '$lib/api/client';
   import { parseExerciseScore } from '$lib/latex/scoreParser';
@@ -71,7 +72,7 @@ Frage hier eingeben... \\BE
 
   async function loadLibrary() {
     try {
-      if ($sessionStore.mode === 'hybrid') {
+      if ($storagePolicyStore === 'server-synced') {
         try {
           const remoteExs = (await api.get('/exercises')) as any[];
           libraryExercises = remoteExs.map((e: any) => ({
@@ -136,7 +137,7 @@ Frage hier eingeben... \\BE
 
     if (saveCustomToLibrary) {
       await db.exercises.put(newEx);
-      if ($sessionStore.mode === 'hybrid') {
+      if ($storagePolicyStore === 'server-synced') {
         try {
           await api.post('/exercises', {
             id: newEx.id,
@@ -245,7 +246,7 @@ ${exerciseInputs}
       }));
       await db.examExercises.bulkPut(examExerciseRecords);
 
-      if ($sessionStore.mode === 'hybrid') {
+      if ($storagePolicyStore === 'server-synced') {
         try {
           await api.post('/exams', {
             id: examId,

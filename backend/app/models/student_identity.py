@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date, datetime
 
-from sqlalchemy import ForeignKey, LargeBinary, String
+from sqlalchemy import Date, DateTime, ForeignKey, LargeBinary, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -20,6 +21,8 @@ class StudentIdentity(Base):
     pii_ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)  # AES-256-GCM
     iv: Mapped[bytes] = mapped_column(LargeBinary(12), nullable=False)          # 12-byte GCM nonce
     encryption_salt: Mapped[bytes] = mapped_column(LargeBinary(16), nullable=False)  # Argon2id salt
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    retention_until: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     def __repr__(self) -> str:
         return f"StudentIdentity(hmac={self.pseudonym_hmac[:8]!r}..., exam={self.exam_id!r})"

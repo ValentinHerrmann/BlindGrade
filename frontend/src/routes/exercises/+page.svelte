@@ -2,15 +2,19 @@
   import { onMount } from 'svelte';
   import { db } from '$lib/db/db';
   import { sessionStore } from '$lib/stores/session';
+  import { storagePolicyStore } from '$lib/stores/storagePolicy';
   import type { ExerciseRecord } from '$lib/db/schema';
   import { api } from '$lib/api/client';
   import { parseExerciseScore } from '$lib/latex/scoreParser';
+  import { syncLocalDataToServer } from '$lib/services/migrationService';
 
   let exercises: ExerciseRecord[] = [];
   let selectedTopic: string = 'ALL';
   let searchQuery: string = '';
   let isLoading = false;
   let errorMsg = '';
+  let isLocalFallback = false;
+  let isSyncingExercises = false;
 
   // Editor modal state
   let isEditorOpen = false;
@@ -46,7 +50,7 @@
     isLoading = true;
     errorMsg = '';
     try {
-      if ($sessionStore.mode === 'hybrid') {
+      if ($storagePolicyStore === 'server-synced') {
         try {
           const remoteExs = (await api.get('/exercises')) as any[];
           exercises = remoteExs.map((e: any) => ({
@@ -61,17 +65,33 @@
             penalty: e.penalty || 0,
           }));
           await db.exercises.bulkPut(exercises);
+          isLocalFallback = false;
         } catch (apiErr) {
           console.warn('Failed to fetch remote exercises, falling back to IDB:', apiErr);
           exercises = await db.exercises.toArray();
+          isLocalFallback = true;
         }
       } else {
+        isLocalFallback = false;
         exercises = await db.exercises.toArray();
       }
     } catch (err: any) {
       errorMsg = err.message || 'Failed to load exercise library.';
     } finally {
       isLoading = false;
+    }
+  }
+
+  async function syncExercisesToServer() {
+    isSyncingExercises = true;
+    try {
+      await syncLocalDataToServer();
+      await loadExercises();
+      alert('Exercises successfully synced to server!');
+    } catch (err: any) {
+      alert(`Sync failed: ${err.message}`);
+    } finally {
+      isSyncingExercises = false;
     }
   }
 
@@ -163,7 +183,7 @@ ${editorLatexBody}
     try {
       await db.exercises.put(record);
 
-      if ($sessionStore.mode === 'hybrid') {
+      if ($storagePolicyStore === 'server-synced') {
         try {
           if (editingId) {
             await api.patch(`/exercises/${id}`, {
@@ -203,7 +223,7 @@ ${editorLatexBody}
     if (!confirm(`Create new corrected version (v${(ex.version || 1) + 1}) of "${ex.name}"? Previous version will be archived for statistics.`)) return;
 
     try {
-      if ($sessionStore.mode === 'hybrid') {
+      if ($storagePolicyStore === 'server-synced') {
         await api.post(`/exercises/${ex.id}/new-version`, {
           name: ex.name,
           topic_tag: ex.topicTag,
@@ -245,7 +265,7 @@ ${editorLatexBody}
     }
 
     try {
-      if ($sessionStore.mode === 'hybrid') {
+      if ($storagePolicyStore === 'server-synced') {
         await api.post(`/exercises/${variantBaseEx.id}/new-variant`, {
           name: variantName,
           topic_tag: variantTopicTag,
@@ -281,6 +301,15 @@ ${editorLatexBody}
 </script>
 
 <div class="exercise-library-page">
+  {#if isLocalFallback}
+    <div class="local-fallback-banner">
+      <span>ℹ️ Exercise library is currently loaded from local browser storage.</span>
+      <button class="sync-now-btn" on:click={syncExercisesToServer} disabled={isSyncingExercises}>
+        {isSyncingExercises ? 'Syncing...' : 'Sync to Server Now'}
+      </button>
+    </div>
+  {/if}
+
   <div class="page-header">
     <div>
       <h2>Exercise Library (Aufgabenkatalog)</h2>
@@ -862,5 +891,32 @@ ${editorLatexBody}
     padding: 0.75rem;
     border-radius: 6px;
     margin-bottom: 1.5rem;
+  }
+
+  .local-fallback-banner {
+    background: rgba(234, 179, 8, 0.15);
+    border: 1px solid #eab308;
+    color: #fef08a;
+    padding: 0.75rem 1.25rem;
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .sync-now-btn {
+    background: #eab308;
+    color: #0f172a;
+    font-weight: 700;
+    border: none;
+    padding: 0.4rem 0.85rem;
+    border-radius: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .sync-now-btn:hover {
+    background: #facc15;
   }
 </style>

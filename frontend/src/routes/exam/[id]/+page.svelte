@@ -7,6 +7,7 @@
   import { compileLatex } from '$lib/latex/compiler';
   import { api } from '$lib/api/client';
   import { sessionStore } from '$lib/stores/session';
+  import { storagePolicyStore } from '$lib/stores/storagePolicy';
 
   $: examId = $page.params.id || '';
 
@@ -24,37 +25,63 @@
     loadExam(examId);
   }
 
+  let isLocalFallback = false;
+  let isSyncingSingle = false;
+
   async function loadExam(id: string) {
     try {
-      if ($sessionStore.mode === 'hybrid') {
-        const remoteExam = (await api.get(`/exams/${id}`)) as any;
-        exam = {
-          id: remoteExam.id,
-          teacherId: remoteExam.teacher_id,
-          title: remoteExam.title,
-          testart: remoteExam.testart,
-          klasse: remoteExam.klasse,
-          datum: remoteExam.datum,
-          nr: remoteExam.nr,
-          fach: remoteExam.fach,
-          lehrernachname: remoteExam.lehrernachname,
-          infoText: remoteExam.info_text,
-          retentionUntil: remoteExam.retention_until,
-          compilationStatus: remoteExam.compilation_status,
-          createdAt: remoteExam.created_at,
-        };
-        exercises = remoteExam.exercises.map((e: any) => ({
-          id: e.id,
-          name: e.name,
-          topicTag: e.topic_tag,
-          latexBody: e.latex_body,
-          maxPoints: e.max_points,
-          version: e.version || 1,
-          orderIndex: e.order_index,
-          questionType: e.question_type || 'free_text',
-          penalty: e.penalty || 0,
-        }));
+      if ($storagePolicyStore === 'server-synced') {
+        try {
+          const remoteExam = (await api.get(`/exams/${id}`)) as any;
+          exam = {
+            id: remoteExam.id,
+            teacherId: remoteExam.teacher_id,
+            title: remoteExam.title,
+            testart: remoteExam.testart,
+            klasse: remoteExam.klasse,
+            datum: remoteExam.datum,
+            nr: remoteExam.nr,
+            fach: remoteExam.fach,
+            lehrernachname: remoteExam.lehrernachname,
+            infoText: remoteExam.info_text,
+            retentionUntil: remoteExam.retention_until,
+            compilationStatus: remoteExam.compilation_status,
+            createdAt: remoteExam.created_at,
+          };
+          exercises = remoteExam.exercises.map((e: any) => ({
+            id: e.id,
+            name: e.name,
+            topicTag: e.topic_tag,
+            latexBody: e.latex_body,
+            maxPoints: e.max_points,
+            version: e.version || 1,
+            orderIndex: e.order_index,
+            questionType: e.question_type || 'free_text',
+            penalty: e.penalty || 0,
+          }));
+          isLocalFallback = false;
+        } catch (serverErr) {
+          // Fall back to IndexedDB if exam is not on server
+          const localExam = (await db.exams.get(id)) || null;
+          if (localExam) {
+            exam = localExam;
+            isLocalFallback = true;
+            const links = await db.examExercises.where('examId').equals(id).sortBy('orderIndex');
+            if (links.length > 0) {
+              exercises = [];
+              for (const link of links) {
+                const ex = await db.exercises.get(link.exerciseId);
+                if (ex) exercises.push({ ...ex, orderIndex: link.orderIndex });
+              }
+            } else {
+              exercises = await db.exercises.where('examId').equals(id).toArray();
+            }
+          } else {
+            console.error('Exam not found on server or locally:', serverErr);
+          }
+        }
       } else {
+        isLocalFallback = false;
         exam = (await db.exams.get(id)) || null;
         const links = await db.examExercises.where('examId').equals(id).sortBy('orderIndex');
         if (links.length > 0) {
@@ -75,6 +102,89 @@
     }
   }
 
+  async function syncCurrentExamToServer() {
+    if (!exam) return;
+    isSyncingSingle = true;
+    try {
+      // 1. Post exam
+      await api.post('/exams', {
+        id: exam.id,
+        title: exam.title,
+        testart: exam.testart,
+        klasse: exam.klasse,
+        datum: exam.datum,
+        nr: exam.nr,
+        fach: exam.fach,
+        lehrernachname: exam.lehrernachname,
+        infoText: exam.infoText,
+        latexPreamble: exam.latexPreamble,
+        latexTemplate: exam.latexTemplate,
+        retentionUntil: exam.retentionUntil || new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10),
+      });
+
+      // 2. Post exercises
+      for (const ex of exercises) {
+        try {
+          await api.post('/exercises', {
+            id: ex.id,
+            title: ex.title || ex.name || 'Exercise',
+            latexBody: ex.latexBody || '',
+            maxPoints: ex.maxPoints,
+            topicTag: ex.topicTag,
+            questionType: ex.questionType || 'free_text',
+            options: ex.options,
+            correctAnswers: ex.correctAnswers,
+            penalty: ex.penalty || 0,
+          });
+        } catch {}
+      }
+
+      // Link exercises
+      try {
+        await api.patch(`/exams/${exam.id}`, { exercise_ids: exercises.map((e) => e.id) });
+      } catch {}
+
+      // 3. Post students
+      const localStudents = await db.students.where('examId').equals(exam.id).toArray();
+      for (const st of localStudents) {
+        try {
+          const emptyCtB64 = btoa(String.fromCharCode(...(st.piiCt || new Uint8Array([0]))));
+          const emptyIvB64 = btoa(String.fromCharCode(...(st.piiIv || new Uint8Array(12))));
+          const emptySaltB64 = btoa(String.fromCharCode(...new Uint8Array(16)));
+          await api.post(`/exams/${exam.id}/students`, {
+            pseudonym_hmac: st.pseudonymId,
+            pii_ciphertext_b64: emptyCtB64,
+            iv_b64: emptyIvB64,
+            encryption_salt_b64: emptySaltB64,
+          });
+        } catch {}
+      }
+
+      // 4. Post submissions
+      const localSubmissions = await db.submissions.where('examId').equals(exam.id).toArray();
+      for (const sub of localSubmissions) {
+        try {
+          await api.post(`/exams/${exam.id}/submissions`, {
+            id: sub.id,
+            pseudonym_hmac: sub.pseudonymHash,
+            total_score: sub.totalScore || 0,
+            scan_ciphertext_b64: sub.scanCt ? btoa(String.fromCharCode(...sub.scanCt)) : undefined,
+            scan_iv_b64: sub.scanIv ? btoa(String.fromCharCode(...sub.scanIv)) : undefined,
+            annotation_ciphertext_b64: sub.annotationCt ? btoa(String.fromCharCode(...sub.annotationCt)) : undefined,
+            annotation_iv_b64: sub.annotationIv ? btoa(String.fromCharCode(...sub.annotationIv)) : undefined,
+          });
+        } catch {}
+      }
+
+      isLocalFallback = false;
+      alert('Exam successfully synced to server!');
+    } catch (err: any) {
+      alert(`Failed to sync exam to server: ${err.message}`);
+    } finally {
+      isSyncingSingle = false;
+    }
+  }
+
   async function handleDeleteExam() {
     if (!exam) return;
     if (!confirm(`Are you sure you want to delete exam "${exam.title}" and all its submissions?`)) return;
@@ -85,7 +195,7 @@
       await db.submissions.where('examId').equals(exam.id).delete();
       await db.students.where('examId').equals(exam.id).delete();
 
-      if ($sessionStore.mode === 'hybrid') {
+      if ($storagePolicyStore === 'server-synced') {
         try {
           await api.delete(`/exams/${exam.id}`);
         } catch (e) {
@@ -127,7 +237,7 @@
     compileNotice = '';
 
     try {
-      if ($sessionStore.mode === 'hybrid') {
+      if ($storagePolicyStore === 'server-synced') {
         const pdfBuffer = await api.getBinary(`/exams/${exam.id}/compile?answers=${showAnswers}`);
         const blob = new Blob([pdfBuffer], { type: 'application/pdf' });
         const url = URL.createObjectURL(blob);
@@ -229,7 +339,7 @@ ${exerciseInputs}
   async function handleSaveMetadata() {
     if (!exam) return;
     try {
-      if ($sessionStore.mode === 'hybrid') {
+      if ($storagePolicyStore === 'server-synced') {
         await api.patch(`/exams/${exam.id}`, {
           title: editTitle,
           testart: editTestart,
@@ -263,7 +373,7 @@ ${exerciseInputs}
 
   async function openLibraryModal() {
     try {
-      if ($sessionStore.mode === 'hybrid') {
+      if ($storagePolicyStore === 'server-synced') {
         const remoteExs = (await api.get('/exercises')) as any[];
         libraryExercises = remoteExs.map((e: any) => ({
           id: e.id,
@@ -306,7 +416,7 @@ ${exerciseInputs}
     if (!exam) return;
     const exerciseIds = exercises.map((e) => e.id);
     try {
-      if ($sessionStore.mode === 'hybrid') {
+      if ($storagePolicyStore === 'server-synced') {
         await api.patch(`/exams/${exam.id}`, { exercise_ids: exerciseIds });
       }
 
@@ -343,6 +453,15 @@ ${exerciseInputs}
 </script>
 
 <div class="exam-detail-page">
+  {#if isLocalFallback}
+    <div class="local-fallback-banner">
+      <span>ℹ️ This exam is currently loaded from local browser storage.</span>
+      <button class="sync-now-btn" on:click={syncCurrentExamToServer} disabled={isSyncingSingle}>
+        {isSyncingSingle ? 'Syncing...' : 'Sync to Server Now'}
+      </button>
+    </div>
+  {/if}
+
   {#if !exam}
     <div class="loading">Loading exam details...</div>
   {:else}
@@ -1028,5 +1147,32 @@ ${exerciseInputs}
     gap: 0.75rem;
     padding: 1rem 1.5rem;
     border-top: 1px solid #334155;
+  }
+
+  .local-fallback-banner {
+    background: rgba(234, 179, 8, 0.15);
+    border: 1px solid #eab308;
+    color: #fef08a;
+    padding: 0.75rem 1.25rem;
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .sync-now-btn {
+    background: #eab308;
+    color: #0f172a;
+    font-weight: 700;
+    border: none;
+    padding: 0.4rem 0.85rem;
+    border-radius: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .sync-now-btn:hover {
+    background: #facc15;
   }
 </style>

@@ -12,7 +12,7 @@ from app.middleware.body_limit import BodyLimitMiddleware
 from app.middleware.cors import add_cors_middleware
 from app.middleware.csp import CSPMiddleware
 from app.middleware.rate_limit import limiter
-from app.routers import admin, auth, compile, exams, exercises, students, submissions
+from app.routers import admin, auth, compile, exams, exercises, students, submissions, user
 
 
 @asynccontextmanager
@@ -54,6 +54,7 @@ def create_app() -> FastAPI:
     app.include_router(students.router, prefix=API_PREFIX)
     app.include_router(submissions.router, prefix=API_PREFIX)
     app.include_router(admin.router, prefix=API_PREFIX)
+    app.include_router(user.router, prefix=API_PREFIX)
 
     @app.get("/api/health", tags=["meta"])
     async def health() -> dict:

@@ -1,6 +1,8 @@
 """Compile router — POST /api/v1/compile/latex"""
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from app.dependencies import get_current_teacher
@@ -17,6 +19,7 @@ router = APIRouter(prefix="/compile", tags=["compile"])
 async def compile_latex_endpoint(
     request: Request,  # Required by slowapi for rate limiting
     body: LaTeXRequest,
+    _teacher: Annotated[Teacher, Depends(get_current_teacher)],
 ) -> Response:
     """
     Compile LaTeX source to PDF via Tectonic.

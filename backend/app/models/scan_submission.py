@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, LargeBinary, String, func
+from sqlalchemy import Date, DateTime, Float, ForeignKey, LargeBinary, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -32,6 +32,7 @@ class ScanSubmission(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    retention_until: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     def __repr__(self) -> str:
         return f"ScanSubmission(id={self.id!r}, exam={self.exam_id!r})"

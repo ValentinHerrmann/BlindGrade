@@ -5,6 +5,7 @@
   import type { SubmissionRecord, ExerciseRecord } from '$lib/db/schema';
   import { api } from '$lib/api/client';
   import { sessionStore } from '$lib/stores/session';
+  import { storagePolicyStore } from '$lib/stores/storagePolicy';
   import { decrypt, encrypt } from '$lib/crypto/aesGcm';
 
   const examId = $page.params.id || '';
@@ -236,7 +237,7 @@
 
       await db.submissions.put(currentSub);
 
-      if ($sessionStore.mode === 'hybrid') {
+      if ($storagePolicyStore === 'server-synced') {
         await api.patch(`/exams/${examId}/submissions/${currentSub.id}/score`, {
           total_score: Number(totalScore),
         });

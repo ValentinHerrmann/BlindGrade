@@ -8,7 +8,6 @@
   import { sessionStore } from "$lib/stores/session";
   import { api } from "$lib/api/client";
 
-  let mode: "local" | "hybrid" = "local";
   let password = "";
   let email = "";
   let errorMsg = "";
@@ -16,47 +15,43 @@
 
   async function handleUnlock() {
     errorMsg = "";
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) {
+      errorMsg = "Please enter your email.";
+      return;
+    }
     if (!password) {
-      errorMsg = "Please enter a master password.";
+      errorMsg = "Please enter your password.";
       return;
     }
 
     isLoading = true;
     try {
-      if (mode === "hybrid") {
-        const normalizedEmail = email.trim().toLowerCase();
-        if (!normalizedEmail) {
-          errorMsg = "Please enter your email.";
-          isLoading = false;
-          return;
-        }
-        // Authenticate with server to get httpOnly cookies
-        const user = await api.post<{
-          email: string;
-          role: "teacher" | "admin";
-        }>("/auth/login", {
-          email: normalizedEmail,
-          password,
-        });
-        sessionStore.setHybridUser(user.email, user.role);
-        email = normalizedEmail;
-      }
+      // Authenticate with server to get httpOnly cookies
+      const user = await api.post<{
+        email: string;
+        role: "teacher" | "admin";
+      }>("/auth/login", {
+        email: normalizedEmail,
+        password,
+      });
 
-      // Derive local session keys
+      // Derive local session keys for client-side encryption
       const salt = generateSalt();
       const masterKey = await deriveKey(password, salt);
       const sessionNonce = generateSessionNonce();
       const sessionKey = await deriveSessionKey(masterKey, sessionNonce);
 
       sessionStore.unlock({
-        mode,
         masterKey,
         sessionKey,
         sessionNonce,
-        email: mode === "hybrid" ? email : undefined,
+        email: user.email,
+        role: user.role,
+        mode: "authenticated",
       });
 
-      // Redirect to main page without losing in-memory session keys
+      // Redirect to main page
       await goto("/");
     } catch (err: any) {
       errorMsg =
@@ -72,63 +67,38 @@
     <h1>BlindGrade</h1>
     <p class="subtitle">Privacy-First Anonymous Exam Grading</p>
 
-    <div class="mode-tabs">
-      <button
-        class:active={mode === "local"}
-        on:click={() => {
-          mode = "local";
-          errorMsg = "";
-        }}
-      >
-        Local Mode
-      </button>
-      <button
-        class:active={mode === "hybrid"}
-        on:click={() => {
-          mode = "hybrid";
-          errorMsg = "";
-        }}
-      >
-        Hybrid Server Mode
-      </button>
-    </div>
-
     {#if errorMsg}
       <div class="error-banner">{errorMsg}</div>
     {/if}
 
     <form on:submit|preventDefault={handleUnlock}>
-      {#if mode === "hybrid"}
-        <div class="form-group">
-          <label for="email">Email</label>
-          <input
-            id="email"
-            type="email"
-            bind:value={email}
-            placeholder="teacher@school.example"
-            required
-          />
-        </div>
-      {/if}
+      <div class="form-group">
+        <label for="email">Email</label>
+        <input
+          id="email"
+          type="email"
+          bind:value={email}
+          placeholder="teacher@school.example"
+          required
+        />
+      </div>
 
       <div class="form-group">
-        <label for="password">Master Password</label>
+        <label for="password">Password</label>
         <input
           id="password"
           type="password"
           bind:value={password}
-          placeholder="Enter password to derive key"
+          placeholder="Enter password to sign in & derive key"
           required
         />
         <small class="hint">
-          {mode === "local"
-            ? "Used to derive local encryption key. Never leaves your browser."
-            : "Your teacher password used for server authentication & key derivation."}
+          Authenticates with server and derives local encryption keys.
         </small>
       </div>
 
       <button type="submit" class="submit-btn" disabled={isLoading}>
-        {isLoading ? "Deriving Keys..." : "Unlock Project"}
+        {isLoading ? "Authenticating..." : "Unlock Project"}
       </button>
     </form>
   </div>
@@ -173,31 +143,6 @@
     text-align: center;
     font-size: 0.875rem;
     color: #94a3b8;
-  }
-
-  .mode-tabs {
-    display: flex;
-    gap: 0.5rem;
-    background: #0f172a;
-    padding: 4px;
-    border-radius: 8px;
-    margin-bottom: 1.5rem;
-  }
-
-  .mode-tabs button {
-    flex: 1;
-    padding: 0.5rem;
-    border: none;
-    background: transparent;
-    color: #94a3b8;
-    border-radius: 6px;
-    cursor: pointer;
-    font-weight: 500;
-  }
-
-  .mode-tabs button.active {
-    background: #334155;
-    color: #f8fafc;
   }
 
   .error-banner {

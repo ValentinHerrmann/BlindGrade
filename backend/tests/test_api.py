@@ -256,3 +256,19 @@ async def test_exercise_versions_and_variants(client: AsyncClient, db: AsyncSess
     assert variant_ex["variant_key"] == "Fahrzeug"
     assert variant_ex["exercise_group_id"] == ex1["exercise_group_id"]
 
+
+@pytest.mark.asyncio
+async def test_compile_endpoint_requires_auth(client: AsyncClient, db: AsyncSession) -> None:
+    # Unauthenticated request fails with 401
+    unauth_res = await client.post("/api/v1/compile/latex", json={"latex": "\\documentclass{article}"})
+    assert unauth_res.status_code == 401
+
+    # Authenticated request passes auth check
+    await _create_teacher_and_login(client, db, "compileteacher@example.com")
+    from unittest.mock import patch
+    with patch("app.routers.compile.compile_latex", return_value=b"%PDF-1.4 fake"):
+        auth_res = await client.post("/api/v1/compile/latex", json={"latex": "\\documentclass{article}"})
+        assert auth_res.status_code == 200
+        assert auth_res.content == b"%PDF-1.4 fake"
+
+
