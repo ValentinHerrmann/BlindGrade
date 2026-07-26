@@ -10,7 +10,7 @@
   import { syncLocalDataToServer } from "$lib/services/migrationService";
   import { get } from "svelte/store";
   import LatexEditor from "$lib/components/LatexEditor.svelte";
-  import { diffLines } from "diff";
+  import { diffLines, diffWords } from "diff";
 
   let exercises: ExerciseRecord[] = [];
   let selectedTopic: string = "ALL";
@@ -27,6 +27,7 @@
   let versionBaseEx: ExerciseRecord | null = null;
   let editorName = "";
   let editorTopicTag = "_General";
+  let editorVariantKey = "";
   let editorLatexBody = "";
 
   // Delete modal state
@@ -41,10 +42,126 @@
   let diffRightId: string = "";
   let diffGroupExercises: ExerciseRecord[] = [];
 
+  // Expanded groups tracking — use object for Svelte reactivity
+  let expandedGroups: { [groupId: string]: boolean } = {};
+
+  interface DiffToken {
+    text: string;
+    type: "added" | "removed" | "unchanged";
+  }
+
   interface DiffLine {
     lineNumber?: number;
-    text: string;
-    type: "added" | "removed" | "unchanged" | "empty";
+    text?: string;
+    type: "added" | "removed" | "unchanged" | "empty" | "modified";
+    tokens?: DiffToken[];
+  }
+
+  /* ── Exercise Grouping ── */
+
+  interface VariantMember {
+    ex: ExerciseRecord;
+    variantLabel: string;
+    version: number;
+    isCurrent: boolean;
+  }
+
+  interface ExerciseGroup {
+    groupId: string;
+    name: string;
+    topicTag: string;
+    maxPoints: number;
+    variants: Map<string, VariantMember[]>;
+    allMembers: VariantMember[];
+  }
+
+  function groupExercises(exs: ExerciseRecord[]): ExerciseGroup[] {
+    const buckets = new Map<string, ExerciseRecord[]>();
+
+    for (const ex of exs) {
+      const key = ex.exerciseGroupId || (`name:${ex.name || "Untitled"}`);
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key)!.push(ex);
+    }
+
+    const groups: ExerciseGroup[] = [];
+
+    for (const [groupId, members] of buckets) {
+      const currentMembers = members.filter((m) => m.isCurrent !== false);
+      if (currentMembers.length === 0) continue;
+
+      const name = currentMembers[0]?.name || "Untitled";
+      const topicTag = currentMembers[0]?.topicTag || "_General";
+      const maxPoints = currentMembers[0]?.maxPoints || 0;
+
+      const variants = new Map<string, VariantMember[]>();
+      for (const ex of currentMembers) {
+        const vKey = ex.variantKey || "_General";
+        if (!variants.has(vKey)) variants.set(vKey, []);
+        variants.get(vKey)!.push({
+          ex,
+          variantLabel: vKey,
+          version: ex.version || 1,
+          isCurrent: ex.isCurrent !== false,
+        });
+      }
+
+      const sortedVariants = new Map<string, VariantMember[]>();
+      const keys = [...variants.keys()].sort((a, b) => {
+        if (a === "_General") return -1;
+        if (b === "_General") return 1;
+        return a.localeCompare(b);
+      });
+      for (const k of keys) sortedVariants.set(k, variants.get(k)!);
+
+      for (const [, vMembers] of sortedVariants) {
+        vMembers.sort((a, b) => b.version - a.version);
+      }
+
+      const allMembers: VariantMember[] = [];
+      for (const [, vMembers] of sortedVariants) {
+        allMembers.push(...vMembers);
+      }
+
+      groups.push({ groupId, name, topicTag, maxPoints, variants: sortedVariants, allMembers });
+    }
+
+    groups.sort((a, b) => a.name.localeCompare(b.name));
+    return groups;
+  }
+
+  function toggleGroup(groupId: string) {
+    expandedGroups = { ...expandedGroups, [groupId]: !expandedGroups[groupId] };
+  }
+
+  function isGroupExpanded(groupId: string): boolean {
+    return !!expandedGroups[groupId];
+  }
+
+  function getGroupRepresentative(group: ExerciseGroup): ExerciseRecord {
+    return group.allMembers[0]?.ex || { id: "", name: group.name } as ExerciseRecord;
+  }
+
+  function buildWordTokens(
+    leftStr: string,
+    rightStr: string,
+  ): { leftTokens: DiffToken[]; rightTokens: DiffToken[] } {
+    const wordDiff = diffWords(leftStr, rightStr);
+    const leftTokens: DiffToken[] = [];
+    const rightTokens: DiffToken[] = [];
+
+    for (const part of wordDiff) {
+      if (part.removed) {
+        leftTokens.push({ text: part.value, type: "removed" });
+      } else if (part.added) {
+        rightTokens.push({ text: part.value, type: "added" });
+      } else {
+        leftTokens.push({ text: part.value, type: "unchanged" });
+        rightTokens.push({ text: part.value, type: "unchanged" });
+      }
+    }
+
+    return { leftTokens, rightTokens };
   }
 
   function stringSimilarity(str1: string, str2: string): number {
@@ -109,6 +226,7 @@
         lineNumber: idx + 1,
         text: line,
         type: "added" as const,
+        tokens: [{ text: line, type: "added" as const }],
       }));
       const leftLines = b.map(() => ({ text: "", type: "empty" as const }));
       return { leftLines, rightLines };
@@ -119,6 +237,7 @@
         lineNumber: idx + 1,
         text: line,
         type: "removed" as const,
+        tokens: [{ text: line, type: "removed" as const }],
       }));
       const rightLines = a.map(() => ({ text: "", type: "empty" as const }));
       return { leftLines, rightLines };
@@ -223,28 +342,34 @@
           lineNumber: leftLineNum++,
           text: a[op.i],
           type: "unchanged",
+          tokens: [{ text: a[op.i], type: "unchanged" }],
         });
         rightLines.push({
           lineNumber: rightLineNum++,
           text: b[op.j],
           type: "unchanged",
+          tokens: [{ text: b[op.j], type: "unchanged" }],
         });
       } else if (op.op === "MODIFY") {
+        const { leftTokens, rightTokens } = buildWordTokens(a[op.i], b[op.j]);
         leftLines.push({
           lineNumber: leftLineNum++,
           text: a[op.i],
-          type: "removed",
+          type: "modified",
+          tokens: leftTokens,
         });
         rightLines.push({
           lineNumber: rightLineNum++,
           text: b[op.j],
-          type: "added",
+          type: "modified",
+          tokens: rightTokens,
         });
       } else if (op.op === "DELETE") {
         leftLines.push({
           lineNumber: leftLineNum++,
           text: a[op.i],
           type: "removed",
+          tokens: [{ text: a[op.i], type: "removed" }],
         });
         rightLines.push({ text: "", type: "empty" });
       } else if (op.op === "INSERT") {
@@ -253,6 +378,7 @@
           lineNumber: rightLineNum++,
           text: b[op.j],
           type: "added",
+          tokens: [{ text: b[op.j], type: "added" }],
         });
       }
     }
@@ -260,10 +386,12 @@
     return { leftLines, rightLines };
   }
 
-  $: diffLeftEx = exercises.find((e) => e.id === diffLeftId) || diffGroupExercises.find((e) => e.id === diffLeftId);
-  $: diffRightEx = exercises.find((e) => e.id === diffRightId) || diffGroupExercises.find((e) => e.id === diffRightId);
+  // Lazy: only look up exercises when the diff modal is open
+  $: diffLeftEx = isDiffModalOpen ? (exercises.find((e) => e.id === diffLeftId) || diffGroupExercises.find((e) => e.id === diffLeftId)) : null;
+  $: diffRightEx = isDiffModalOpen ? (exercises.find((e) => e.id === diffRightId) || diffGroupExercises.find((e) => e.id === diffRightId)) : null;
 
-  $: sideBySideDiff = computeSideBySideDiff(diffLeftEx?.latexBody || "", diffRightEx?.latexBody || "");
+  // Lazy: only compute expensive diff when modal is open
+  $: sideBySideDiff = isDiffModalOpen ? computeSideBySideDiff(diffLeftEx?.latexBody || "", diffRightEx?.latexBody || "") : { leftLines: [], rightLines: [] };
 
   // Preview state
   let isPreviewLoading = false;
@@ -286,6 +414,9 @@
       (ex.latexBody && ex.latexBody.toLowerCase().includes(q));
     return matchesTopic && matchesSearch;
   });
+
+  // Grouped view: filter then group
+  $: filteredGroups = groupExercises(filteredExercises);
 
   onMount(() => {
     loadExercises();
@@ -311,6 +442,7 @@
             penalty: e.penalty || 0,
             exerciseGroupId: e.exercise_group_id || undefined,
             variantKey: e.variant_key || undefined,
+            isCurrent: e.is_current,
           }));
           const encryptedExs = await Promise.all(exercises.map(ex => encryptExercise(ex, key)));
           await db.exercises.bulkPut(encryptedExs);
@@ -353,6 +485,7 @@
     versionBaseEx = null;
     editorName = "New_Exercise";
     editorTopicTag = "_General";
+    editorVariantKey = "";
     editorLatexBody = `\\begin{Aufgabe}{Neue Aufgabe}
 Frage hier eingeben... \\BE
 \\end{Aufgabe}`;
@@ -367,6 +500,7 @@ Frage hier eingeben... \\BE
     versionBaseEx = null;
     editorName = ex.name || "Untitled";
     editorTopicTag = ex.topicTag || "_General";
+    editorVariantKey = ex.variantKey || "";
     editorLatexBody = ex.latexBody || "";
     if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
     previewPdfUrl = null;
@@ -379,6 +513,7 @@ Frage hier eingeben... \\BE
     versionBaseEx = ex;
     editorName = ex.name || "Untitled";
     editorTopicTag = ex.topicTag || "_General";
+    editorVariantKey = ex.variantKey || "";
     editorLatexBody = ex.latexBody || "";
     if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
     previewPdfUrl = null;
@@ -459,6 +594,7 @@ ${editorLatexBody}
             maxPoints: parseExerciseScore(editorLatexBody),
             version: (versionBaseEx.version || 1) + 1,
             exerciseGroupId: groupId,
+            variantKey: editorVariantKey.trim() || undefined,
             isCurrent: true,
             updatedAt: new Date().toISOString(),
           };
@@ -488,6 +624,7 @@ ${editorLatexBody}
       version: (exercises.find((e) => e.id === id)?.version || 0) + 1,
       questionType: "free_text",
       penalty: 0,
+      variantKey: editorVariantKey.trim() || undefined,
       updatedAt: new Date().toISOString(),
     };
 
@@ -502,6 +639,7 @@ ${editorLatexBody}
               name: record.name,
               topic_tag: record.topicTag,
               latex_body: record.latexBody,
+              variant_key: record.variantKey || null,
             });
           } else {
             await api.post("/exercises", {
@@ -509,6 +647,7 @@ ${editorLatexBody}
               name: record.name,
               topic_tag: record.topicTag,
               latex_body: record.latexBody,
+              variant_key: record.variantKey || null,
             });
           }
         } catch (apiErr) {
@@ -733,16 +872,16 @@ ${editorLatexBody}
         class:active={selectedTopic === "ALL"}
         on:click={() => (selectedTopic = "ALL")}
       >
-        All ({exercises.length})
+        All ({filteredGroups.length})
       </button>
       {#each availableTopics as topic}
-        {@const count = exercises.filter((e) => e.topicTag === topic).length}
+        {@const groupCount = filteredGroups.filter((g) => g.topicTag === topic).length}
         <button
           class="pill"
           class:active={selectedTopic === topic}
           on:click={() => (selectedTopic = topic)}
         >
-          {topic} ({count})
+          {topic} ({groupCount})
         </button>
       {/each}
     </div>
@@ -750,7 +889,7 @@ ${editorLatexBody}
 
   {#if isLoading}
     <div class="loading">Loading exercise library...</div>
-  {:else if filteredExercises.length === 0}
+  {:else if filteredGroups.length === 0}
     <div class="empty-state">
       <p>No exercises found matching your criteria.</p>
       <button class="create-btn" on:click={openCreateModal}
@@ -758,89 +897,158 @@ ${editorLatexBody}
       >
     </div>
   {:else}
-    <div class="exercise-grid">
-      {#each filteredExercises as ex}
-        {@const score = parseExerciseScore(ex.latexBody || "")}
-        <div class="exercise-card">
-          <div class="card-header">
-            <h4>{ex.name || "Untitled"}</h4>
-            <div class="badges">
-              {#if ex.topicTag}
-                <span class="topic-badge">{ex.topicTag}</span>
-              {/if}
-              {#if ex.variantKey}
-                <span class="variant-badge">Variant: {ex.variantKey}</span>
-              {/if}
-              <span class="score-badge">{score} Pkt</span>
-              <span class="version-badge">v{ex.version || 1}</span>
+    <div class="exercise-group-list">
+      {#each filteredGroups as group}
+        {@const rep = getGroupRepresentative(group)}
+        {@const variantCount = group.variants.size}
+        {@const isExpanded = !!expandedGroups[group.groupId]}
+        <div class="exercise-group-card">
+          <!-- ── Group Header (always visible) ── -->
+          <div
+            class="group-header"
+            role="button"
+            tabindex="0"
+            aria-expanded={isExpanded}
+            on:click={() => toggleGroup(group.groupId)}
+            on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleGroup(group.groupId); } }}
+          >
+            <div class="group-title-row">
+              <h3>{group.name || "Untitled"}</h3>
+              <div class="group-meta">
+                {#if group.topicTag}
+                  <span class="topic-badge">{group.topicTag}</span>
+                {/if}
+                <span class="score-badge">{group.maxPoints} Pkt</span>
+                <span class="variant-count-badge">{variantCount} variant{variantCount !== 1 ? 's' : ''}</span>
+              </div>
             </div>
+
+            <!-- Variant pills row (collapsed preview) -->
+            {#if !isExpanded}
+              <div class="variant-pills-row">
+                {#each group.variants.keys() as vKey}
+                  {@const vMembers = group.variants.get(vKey) || []}
+                  {@const latestVer = vMembers[0]?.version || 1}
+                  <span class="variant-pill{vKey !== '_General' ? ' has-variant' : ''}">
+                    {vKey} <strong>v{latestVer}</strong>
+                  </span>
+                {/each}
+              </div>
+            {/if}
+
+            <button class="expand-toggle" class:expanded={isExpanded}>
+              {isExpanded ? '▲' : '▼'}
+            </button>
           </div>
 
-          <div class="snippet-preview">
-            <code>{(ex.latexBody || "").slice(0, 150)}...</code>
-          </div>
+          <!-- ── Expanded Body ── -->
+          {#if isExpanded}
+            <div class="group-body">
+              {#each group.variants as [vKey, vMembers]}
+                <div class="variant-section">
+                  <div class="variant-header">
+                    <span class="variant-label{vKey !== '_General' ? ' has-variant' : ''}">
+                      {vKey}
+                    </span>
+                    <span class="variant-version">v{vMembers[0]?.version || 1}{vMembers[0]?.isCurrent ? ' ← current' : ''}</span>
+                  </div>
 
-          <div class="card-actions">
-            <button
-              class="action-btn edit-btn"
-              title="Edit exercise"
-              on:click={() => openEditModal(ex)}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-              </svg>
-              <span>Edit</span>
-            </button>
-            <button
-              class="action-btn version-btn"
-              title="Create new version"
-              on:click={() => openNewVersionModal(ex)}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                <line x1="12" y1="18" x2="12" y2="12"></line>
-                <line x1="9" y1="15" x2="15" y2="15"></line>
-              </svg>
-              <span>+Ver</span>
-            </button>
-            <button
-              class="action-btn variant-btn"
-              title="Create parallel variant"
-              on:click={() => openVariantModal(ex)}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3" y="3" width="7" height="7" rx="1"></rect>
-                <rect x="14" y="3" width="7" height="7" rx="1"></rect>
-                <rect x="14" y="14" width="7" height="7" rx="1"></rect>
-                <path d="M6 10v7a2 2 0 0 0 2 2h6"></path>
-              </svg>
-              <span>+Var</span>
-            </button>
-            <button
-              class="action-btn diff-btn"
-              title="Compare LaTeX diff"
-              on:click={() => openDiffModal(ex)}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M16 3h5v5"></path>
-                <path d="M8 21H3v-5"></path>
-                <path d="M21 3L14 10"></path>
-                <path d="M3 21l7-7"></path>
-              </svg>
-              <span>Diff</span>
-            </button>
-            <button
-              class="action-btn delete-btn"
-              title="Delete exercise"
-              on:click={() => openDeleteModal(ex)}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="3 6 5 6 21 6"></polyline>
-                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-              </svg>
-            </button>
-          </div>
+                  {#each vMembers as member}
+                    <div class="variant-member">
+                      <div class="member-info">
+                        <span class="member-version-badge">v{member.version}</span>
+                        {#if member.isCurrent}
+                          <span class="current-tag">current</span>
+                        {/if}
+                      </div>
+
+                      <div class="snippet-preview">
+                        <code>{(member.ex.latexBody || "").slice(0, 150)}...</code>
+                      </div>
+
+                      <div class="member-actions">
+                        <button
+                          class="action-btn edit-btn"
+                          title="Edit exercise"
+                          on:click={() => openEditModal(member.ex)}
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                          </svg>
+                          <span>Edit</span>
+                        </button>
+                        <button
+                          class="action-btn version-btn"
+                          title="Create new version"
+                          on:click={() => openNewVersionModal(member.ex)}
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <line x1="12" y1="18" x2="12" y2="12"></line>
+                            <line x1="9" y1="15" x2="15" y2="15"></line>
+                          </svg>
+                          <span>+Ver</span>
+                        </button>
+                        <button
+                          class="action-btn diff-btn"
+                          title="Compare LaTeX diff"
+                          on:click={() => openDiffModal(member.ex)}
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M16 3h5v5"></path>
+                            <path d="M8 21H3v-5"></path>
+                            <path d="M21 3L14 10"></path>
+                            <path d="M3 21l7-7"></path>
+                          </svg>
+                          <span>Diff</span>
+                        </button>
+                        <button
+                          class="action-btn delete-btn"
+                          title="Delete exercise"
+                          on:click={() => openDeleteModal(member.ex)}
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="3 6 5 6 21 6"></polyline>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              {/each}
+
+              <!-- Group-level actions -->
+              <div class="group-actions">
+                <button
+                  class="group-action-btn variant-btn"
+                  title="Create parallel variant"
+                  on:click={() => openVariantModal(rep)}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="3" width="7" height="7" rx="1"></rect>
+                    <rect x="14" y="3" width="7" height="7" rx="1"></rect>
+                    <rect x="14" y="14" width="7" height="7" rx="1"></rect>
+                    <path d="M6 10v7a2 2 0 0 0 2 2h6"></path>
+                  </svg>
+                  <span>+ Variant</span>
+                </button>
+                <button
+                  class="group-action-btn version-btn"
+                  title="Create new version of first variant"
+                  on:click={() => openNewVersionModal(rep)}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <line x1="12" y1="18" x2="12" y2="12"></line>
+                    <line x1="9" y1="15" x2="15" y2="15"></line>
+                  </svg>
+                  <span>+ Version</span>
+                </button>
+              </div>
+            </div>
+          {/if}
         </div>
       {/each}
     </div>
@@ -973,6 +1181,16 @@ ${editorLatexBody}
               bind:value={editorTopicTag}
               placeholder="_Vererbung"
               required
+            />
+          </div>
+
+          <div class="form-group">
+            <label for="editorVariantKey">Variant Key (optional)</label>
+            <input
+              id="editorVariantKey"
+              type="text"
+              bind:value={editorVariantKey}
+              placeholder="e.g. Moebel, Fahrzeug, Wildtier (leave empty for default)"
             />
           </div>
         </div>
@@ -1121,7 +1339,15 @@ ${editorLatexBody}
               {#each sideBySideDiff.leftLines as line}
                 <div class="diff-line {line.type}">
                   <span class="line-num">{line.lineNumber ?? ""}</span>
-                  <span class="line-content">{line.text}</span>
+                  <span class="line-content">
+                    {#if line.tokens}
+                      {#each line.tokens as token}
+                        <span class="word-token {token.type}">{token.text}</span>
+                      {/each}
+                    {:else}
+                      {line.text}
+                    {/if}
+                  </span>
                 </div>
               {/each}
             </div>
@@ -1133,7 +1359,15 @@ ${editorLatexBody}
               {#each sideBySideDiff.rightLines as line}
                 <div class="diff-line {line.type}">
                   <span class="line-num">{line.lineNumber ?? ""}</span>
-                  <span class="line-content">{line.text}</span>
+                  <span class="line-content">
+                    {#if line.tokens}
+                      {#each line.tokens as token}
+                        <span class="word-token {token.type}">{token.text}</span>
+                      {/each}
+                    {:else}
+                      {line.text}
+                    {/if}
+                  </span>
                 </div>
               {/each}
             </div>
@@ -1227,31 +1461,51 @@ ${editorLatexBody}
     font-weight: 600;
   }
 
-  .exercise-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: 1.25rem;
+  /* ── Group List Layout ── */
+  .exercise-group-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
   }
 
-  .exercise-card {
+  .exercise-group-card {
     background: #1e293b;
     border: 1px solid #334155;
     border-radius: 10px;
-    padding: 1.25rem;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
+    overflow: hidden;
   }
 
-  .card-header h4 {
+  /* ── Group Header ── */
+  .group-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 1rem;
+    padding: 1.25rem;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s ease;
+  }
+
+  .group-header:hover {
+    background: rgba(56, 189, 248, 0.04);
+  }
+
+  .group-title-row {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .group-title-row h3 {
     margin: 0 0 0.5rem 0;
     color: #38bdf8;
+    font-size: 1.1rem;
   }
 
-  .badges {
+  .group-meta {
     display: flex;
     gap: 0.5rem;
     flex-wrap: wrap;
+    align-items: center;
   }
 
   .topic-badge {
@@ -1271,7 +1525,111 @@ ${editorLatexBody}
     font-weight: 600;
   }
 
-  .version-badge {
+  .variant-count-badge {
+    background: #0f172a;
+    color: #94a3b8;
+    font-size: 0.75rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+  }
+
+  /* Variant pills shown in collapsed state */
+  .variant-pills-row {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-top: 0.5rem;
+  }
+
+  .variant-pill {
+    font-size: 0.78rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 12px;
+    background: #0f172a;
+    color: #94a3b8;
+    border: 1px solid #334155;
+  }
+
+  .variant-pill.has-variant {
+    background: rgba(139, 92, 246, 0.15);
+    color: #c4b5fd;
+    border-color: #8b5cf6;
+  }
+
+  .expand-toggle {
+    background: transparent;
+    border: none;
+    color: #64748b;
+    font-size: 1rem;
+    cursor: pointer;
+    padding: 0.25rem 0.5rem;
+    transition: color 0.15s ease, transform 0.2s ease;
+    flex-shrink: 0;
+    margin-top: 0.25rem;
+  }
+
+  .expand-toggle.expanded {
+    color: #38bdf8;
+  }
+
+  /* ── Group Body (expanded) ── */
+  .group-body {
+    border-top: 1px solid #334155;
+    padding: 1rem 1.25rem 1.25rem;
+    background: rgba(15, 23, 42, 0.3);
+  }
+
+  .variant-section {
+    margin-bottom: 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.5);
+  }
+
+  .variant-section:last-of-type {
+    border-bottom: none;
+    margin-bottom: 0;
+    padding-bottom: 0;
+  }
+
+  .variant-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .variant-label {
+    font-size: 0.9rem;
+    font-weight: 700;
+    padding: 0.2rem 0.6rem;
+    border-radius: 6px;
+    background: #334155;
+    color: #cbd5e1;
+  }
+
+  .variant-label.has-variant {
+    background: rgba(139, 92, 246, 0.25);
+    color: #ddd6fe;
+  }
+
+  .variant-version {
+    font-size: 0.8rem;
+    color: #64748b;
+  }
+
+  .variant-member {
+    margin-left: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .member-info {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin-bottom: 0.5rem;
+  }
+
+  .member-version-badge {
     background: #0f172a;
     color: #64748b;
     font-size: 0.75rem;
@@ -1279,39 +1637,59 @@ ${editorLatexBody}
     border-radius: 4px;
   }
 
-  .exercise-card {
-    background: #1e293b;
-    border: 1px solid #334155;
-    border-radius: 10px;
-    padding: 1.25rem;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    box-sizing: border-box;
-    overflow: hidden;
+  .current-tag {
+    font-size: 0.7rem;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    background: rgba(34, 197, 94, 0.15);
+    color: #86efac;
+    font-weight: 600;
+    text-transform: uppercase;
   }
 
   .snippet-preview {
     background: #0f172a;
     padding: 0.75rem;
     border-radius: 6px;
-    margin: 1rem 0;
+    margin-bottom: 0.75rem;
     font-size: 0.8rem;
     color: #94a3b8;
     max-height: 80px;
     overflow: hidden;
   }
 
-  .card-actions {
+  .member-actions {
     display: flex;
     flex-wrap: wrap;
     gap: 0.375rem;
     justify-content: flex-end;
-    align-items: center;
-    width: 100%;
-    box-sizing: border-box;
   }
 
+  /* ── Group-level actions ── */
+  .group-actions {
+    display: flex;
+    gap: 0.5rem;
+    padding-top: 1rem;
+    border-top: 1px dashed rgba(51, 65, 85, 0.6);
+    margin-top: 0.5rem;
+    justify-content: flex-end;
+  }
+
+  .group-action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.45rem 0.75rem;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: background 0.15s ease, opacity 0.15s ease;
+  }
+
+  /* ── Action Buttons ── */
   .action-btn {
     display: inline-flex;
     align-items: center;
@@ -1341,7 +1719,32 @@ ${editorLatexBody}
     color: #fca5a5;
   }
 
-  /* Modal styling */
+  .version-btn {
+    background: #334155;
+    color: #38bdf8;
+  }
+
+  .group-action-btn.version-btn {
+    background: #334155;
+    color: #38bdf8;
+  }
+
+  .variant-btn {
+    background: #4c1d95;
+    color: #ddd6fe;
+  }
+
+  .group-action-btn.variant-btn {
+    background: #4c1d95;
+    color: #ddd6fe;
+  }
+
+  .diff-btn {
+    background: #1e3a8a;
+    color: #93c5fd;
+  }
+
+  /* ── Modal styling ── */
   .modal-backdrop {
     position: fixed;
     top: 0;
@@ -1429,12 +1832,6 @@ ${editorLatexBody}
     color: white;
   }
 
-  .code-editor {
-    font-family: "Fira Code", "Courier New", Courier, monospace;
-    font-size: 0.9rem;
-    line-height: 1.4;
-  }
-
   .label-row {
     display: flex;
     justify-content: space-between;
@@ -1500,29 +1897,6 @@ ${editorLatexBody}
     text-align: center;
     padding: 3rem;
     color: #94a3b8;
-  }
-
-  .variant-badge {
-    background: #8b5cf6;
-    color: white;
-    font-size: 0.75rem;
-    padding: 0.15rem 0.5rem;
-    border-radius: 4px;
-  }
-
-  .version-btn {
-    background: #334155;
-    color: #38bdf8;
-  }
-
-  .variant-btn {
-    background: #4c1d95;
-    color: #ddd6fe;
-  }
-
-  .diff-btn {
-    background: #1e3a8a;
-    color: #93c5fd;
   }
 
   .delete-confirm-btn {
@@ -1675,12 +2049,43 @@ ${editorLatexBody}
     border-right-color: rgba(34, 197, 94, 0.3);
   }
 
+  .diff-line.modified {
+    background: rgba(234, 179, 8, 0.08);
+  }
+
+  .diff-line.modified .line-num {
+    color: #fbbf24;
+    border-right-color: rgba(234, 179, 8, 0.2);
+  }
+
   .diff-line.unchanged {
     color: #cbd5e1;
   }
 
   .diff-line.empty {
     background: rgba(15, 23, 42, 0.5);
+  }
+
+  .word-token {
+    display: inline;
+    border-radius: 3px;
+    padding: 0 2px;
+  }
+
+  .word-token.removed {
+    background: rgba(239, 68, 68, 0.35);
+    color: #fca5a5;
+    text-decoration: line-through;
+  }
+
+  .word-token.added {
+    background: rgba(34, 197, 94, 0.35);
+    color: #86efac;
+    font-weight: 600;
+  }
+
+  .word-token.unchanged {
+    color: inherit;
   }
 
   .desc-text {
