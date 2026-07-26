@@ -19,13 +19,15 @@ from app.services import audit as audit_svc
 from app.services.crypto import hash_password, hash_token, needs_rehash, verify_password
 from app.services.jwt import create_access_token, create_refresh_token, decode_token
 
+from app.config import settings
+
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 # Cookie names
 ACCESS_COOKIE = "access_token"
 REFRESH_COOKIE = "refresh_token"
 
-_COOKIE_KWARGS = dict(httponly=True, secure=True, samesite="strict")
+_COOKIE_KWARGS = dict(httponly=True, secure=not settings.is_dev, samesite="strict")
 
 
 def _set_auth_cookies(

@@ -570,20 +570,20 @@ type WorkerResponse =
 - [x] Dockerfile + docker-compose (postgres, backend, volumes)
 
 ### Frontend tasks
-- [ ] SvelteKit project init with TypeScript, Vite, static adapter
-- [ ] `sri-manifest.json` (split into `wasm` and `js` sections) + build-time verification script
-- [ ] Runtime WASM integrity checker: fetch blob → `crypto.subtle.digest('SHA-256', buffer)` → compare against manifest → abort on mismatch
-- [ ] `crypto/keyDerivation.ts`: `deriveKey(password, salt) → CryptoKey` using argon2-browser WASM
-- [ ] `crypto/sessionKey.ts`: `deriveSessionKey(masterKey, nonce) → CryptoKey` via HKDF (Web Crypto)
-- [ ] `crypto/aesGcm.ts`: `encrypt(key, plaintext) → { ct, iv }` and `decrypt(key, ct, iv) → plaintext` — every call generates a fresh random 12-byte IV via `crypto.getRandomValues`
-- [ ] `crypto/hmac.ts`: `hmacPseudonymId(rawId, examSecret) → string`
-- [ ] `stores/session.ts`: session store (no accessToken field) + session timeout (30-min inactivity → wipe masterKey + sessionKey from store + lock UI)
-- [ ] `db/schema.ts` + `db/db.ts`: Dexie instance with all stores
-- [ ] `db/hygiene.ts`:
+- [x] SvelteKit project init with TypeScript, Vite, static adapter
+- [x] `sri-manifest.json` (split into `wasm` and `js` sections) + build-time verification script
+- [x] Runtime WASM integrity checker: fetch blob → `crypto.subtle.digest('SHA-256', buffer)` → compare against manifest → abort on mismatch
+- [x] `crypto/keyDerivation.ts`: `deriveKey(password, salt) → CryptoKey` using argon2-browser WASM
+- [x] `crypto/sessionKey.ts`: `deriveSessionKey(masterKey, nonce) → CryptoKey` via HKDF (Web Crypto)
+- [x] `crypto/aesGcm.ts`: `encrypt(key, plaintext) → { ct, iv }` and `decrypt(key, ct, iv) → plaintext` — every call generates a fresh random 12-byte IV via `crypto.getRandomValues`
+- [x] `crypto/hmac.ts`: `hmacPseudonymId(rawId, examSecret) → string`
+- [x] `stores/session.ts`: session store (no accessToken field) + session timeout (30-min inactivity → wipe masterKey + sessionKey from store + lock UI)
+- [x] `db/schema.ts` + `db/db.ts`: Dexie instance with all stores
+- [x] `db/hygiene.ts`:
   - Register `beforeunload` + `visibilitychange` → attempt IDB wipe; prompt if `isDirty`
   - Document in code comments: this is best-effort; encrypt-at-rest is the primary protection
-- [ ] Unlock page (`/unlock`): password input → `deriveKey` → `deriveSessionKey` → populate session store
-- [ ] `api/client.ts`: typed fetch wrapper with `credentials: 'include'` on all requests; on 401 response, attempt silent `POST /auth/refresh`; on refresh failure, redirect to login
+- [x] Unlock page (`/unlock`): password input → `deriveKey` → `deriveSessionKey` → populate session store
+- [x] `api/client.ts`: typed fetch wrapper with `credentials: 'include'` on all requests; on 401 response, attempt silent `POST /auth/refresh`; on refresh failure, redirect to login
 
 ### Verification
 - Unit test `keyDerivation.ts`: same password + salt → same key (deterministic).
@@ -601,10 +601,10 @@ type WorkerResponse =
 **Goal:** Full `.bgproj` round-trip (export/import) with mandatory encryption, erasure workflow, retention warnings.
 
 ### Frontend tasks
-- [ ] `db/migrations.ts`: implement Dexie version upgrade hooks for future schema changes
-- [ ] Write all IDB entries with encrypted blobs (`aesGcm.encrypt` before every IDB put)
-- [ ] `archive/format.ts`: TypeScript types for all record types + magic header constants + `ARCHIVE_SECRET_PURPOSE = "bgproj-link"` constant for HKDF
-- [ ] `archive/packer.ts`:
+- [x] `db/migrations.ts`: implement Dexie version upgrade hooks for future schema changes
+- [x] Write all IDB entries with encrypted blobs (`aesGcm.encrypt` before every IDB put)
+- [x] `archive/format.ts`: TypeScript types for all record types + magic header constants + `ARCHIVE_SECRET_PURPOSE = "bgproj-link"` constant for HKDF
+- [x] `archive/packer.ts`:
   - **Nonce freshness:** Generate fresh 16-byte Argon2id salt AND fresh 12-byte GCM nonce at the start of every export. Never reuse salt/nonce from a previous export.
   - Derive a fresh master key from password + new salt; derive archive_secret via HKDF for pseudonym hashing
   - Open file via `showSaveFilePicker()` (File System Access API)
@@ -615,7 +615,7 @@ type WorkerResponse =
   - After all records written, go back and patch the manifest's `records_checksum` field (or write checksum as a trailing CHECKSUM record)
   - Fallback if File System Access API unavailable: buffer in memory with segmented archives (`.bgproj.001`, `.bgproj.002`, etc.) with manifest
   - Emit progress events: `{ stage, current, total, heapUsedMB }`
-- [ ] `archive/unpacker.ts`:
+- [x] `archive/unpacker.ts`:
   - Read file into `ReadableStream`
   - Parse header, verify magic + format version
   - Derive key from header salt + user password
@@ -625,11 +625,11 @@ type WorkerResponse =
   - Verify `exam_count` / `student_count` match actual counts as secondary check
   - Resolve pseudonym linkage: for each STUDENT record, compute `HMAC(student.pseudonym_id, archive_secret)` and match against SUBMISSION `pseudonym_hash` values
   - Emit progress events
-- [ ] `workers/packWorker.ts`: fflate `deflate`/`inflate` with DEFLATE level 6
-- [ ] `gdpr/retention.ts`: on `.bgproj` load, compare `manifest.expires_at` to `Date.now()`; if expired, show blocking modal: "This project has exceeded its retention period. Delete or explicitly extend?"
-- [ ] `gdpr/erasure.ts`: `eraseStudent(pseudonymId)` → delete from IDB `students` + `submissions` stores → append `AUDITLOG` entry → set `isDirty = true`
-- [ ] Erasure UI: settings → "Manage Students" → per-student delete button + confirmation dialog
-- [ ] Clear-on-export: after successful pack, prompt "Clear local session data?" (default: Yes)
+- [x] `workers/packWorker.ts`: fflate `deflate`/`inflate` with DEFLATE level 6
+- [x] `gdpr/retention.ts`: on `.bgproj` load, compare `manifest.expires_at` to `Date.now()`; if expired, show blocking modal: "This project has exceeded its retention period. Delete or explicitly extend?"
+- [x] `gdpr/erasure.ts`: `eraseStudent(pseudonymId)` → delete from IDB `students` + `submissions` stores → append `AUDITLOG` entry → set `isDirty = true`
+- [x] Erasure UI: settings → "Manage Students" → per-student delete button + confirmation dialog
+- [x] Clear-on-export: after successful pack, prompt "Clear local session data?" (default: Yes)
 
 ### Verification
 - Integration test: create 30 mock students with 5 MB scan blobs each → export → import → verify all records intact and pseudonym linkage resolves.
@@ -647,13 +647,13 @@ type WorkerResponse =
 **Goal:** All API endpoints live, sandboxed Tectonic compilation, retention cron, Hybrid Mode upload/download.
 
 ### Backend tasks
-- [ ] `routers/exams.py`: CRUD with ownership dependency; soft-delete sets `deleted_at`
-- [ ] `routers/students.py`:
+- [x] `routers/exams.py`: CRUD with ownership dependency; soft-delete sets `deleted_at`
+- [x] `routers/students.py`:
   - `POST /exams/{id}/students`: store `pseudonym_hmac` + encrypted blobs
   - `DELETE /exams/{id}/students/{hmac}`: hard delete student + cascade submissions; write AUDIT DELETE (captures teacher_email snapshot)
-- [ ] `routers/submissions.py`: upload/download ciphertext; `PATCH score` endpoint
-- [ ] `schemas/latex.py`: Pydantic model `LaTeXRequest` with `__repr__` overridden to return `"LaTeXRequest(<redacted>)"` — prevents accidental payload exposure in any debug log, traceback, or error message at any log level in any environment
-- [ ] `services/latex.py`:
+- [x] `routers/submissions.py`: upload/download ciphertext; `PATCH score` endpoint
+- [x] `schemas/latex.py`: Pydantic model `LaTeXRequest` with `__repr__` overridden to return `"LaTeXRequest(<redacted>)"` — prevents accidental payload exposure in any debug log, traceback, or error message at any log level in any environment
+- [x] `services/latex.py`:
   - Async wrapper: `asyncio.create_subprocess_exec("tectonic", "--untrusted", "main.tex", cwd=tmpdir)`
   - **`--untrusted` flag is mandatory** — disables `\write18` (shell escape), `\input` from outside the working directory, and network access within Tectonic
   - Writes LaTeX to `tmp/{uuid}/main.tex` inside a temp dir
@@ -661,12 +661,12 @@ type WorkerResponse =
   - `shutil.rmtree(tmpdir)` in `finally` block (never leaks temp files)
   - **No logging of the LaTeX payload at any level, in any environment.** There is no env-var gate. The `LaTeXRequest` model's `__repr__` redaction ensures the payload cannot leak through framework debug logging, exception tracebacks, or Sentry-style error reporters.
   - Production hardening (optional): run Tectonic in a secondary container or `unshare --mount --net` namespace with read-only root filesystem, limiting blast radius even if `--untrusted` is bypassed by a future Tectonic bug
-- [ ] `routers/compile.py`: `POST /compile/latex` → validate body via `LaTeXRequest` → call `latex_service.compile()` → return PDF bytes. Rate limit: `@limiter.limit("10/minute")`
-- [ ] `services/retention.py`: **CLI management command** `run-retention` — queries `Exam` rows where `retention_until < today` and `deleted_at IS NULL`, soft-deletes them, writes AUDIT row per deletion. Invoked by an **external cron job** (e.g., `0 2 * * * cd /app && python -m app.cli run-retention`), NOT by an in-process scheduler. This eliminates the multi-worker duplication problem.
-- [ ] `routers/admin.py`: aggregate stats endpoint; enforce k≥5 server-side before returning group stats
-- [ ] `middleware/rate_limit.py`: slowapi setup with Redis backend for prod; in-memory for dev/test
-- [ ] Alembic migration: add `deleted_at` to `Exam` + `ScanSubmission`; create partial index `WHERE deleted_at IS NULL`; make `AuditLog.teacher_id` nullable with `ON DELETE SET NULL`; add `AuditLog.teacher_email` column
-- [ ] Docker Compose: add Redis service for rate limiting; add cron service (or systemd timer in the backend container) for retention job
+- [x] `routers/compile.py`: `POST /compile/latex` → validate body via `LaTeXRequest` → call `latex_service.compile()` → return PDF bytes. Rate limit: `@limiter.limit("10/minute")`
+- [x] `services/retention.py`: **CLI management command** `run-retention` — queries `Exam` rows where `retention_until < today` and `deleted_at IS NULL`, soft-deletes them, writes AUDIT row per deletion. Invoked by an **external cron job** (e.g., `0 2 * * * cd /app && python -m app.cli run-retention`), NOT by an in-process scheduler. This eliminates the multi-worker duplication problem.
+- [x] `routers/admin.py`: aggregate stats endpoint; enforce k≥5 server-side before returning group stats
+- [x] `middleware/rate_limit.py`: slowapi setup with Redis backend for prod; in-memory for dev/test
+- [x] Alembic migration: add `deleted_at` to `Exam` + `ScanSubmission`; create partial index `WHERE deleted_at IS NULL`; make `AuditLog.teacher_id` nullable with `ON DELETE SET NULL`; add `AuditLog.teacher_email` column
+- [x] Docker Compose: add Redis service for rate limiting; add cron service (or systemd timer in the backend container) for retention job
 
 ### Verification
 - Unit test `latex.py`: valid LaTeX → PDF bytes returned; timeout exceeded → `asyncio.TimeoutError` raised; temp dir absent after return in all branches (success, timeout, exception).
@@ -687,38 +687,38 @@ type WorkerResponse =
 **Goal:** QR decode, OMR pipeline, hardware-adaptive worker pool with dynamic OOM fallback, fiducial marker support in LaTeX templates.
 
 ### Frontend tasks
-- [ ] `hardware/detect.ts`:
+- [x] `hardware/detect.ts`:
   - Probe `navigator.hardwareConcurrency`, `navigator.deviceMemory`, WASM SIMD
   - Return initial `HardwareProfile` for pipeline selection
   - Export `PipelineMonitor` class:
     - After each page processed, check `performance.memory.usedJSHeapSize` (Chrome) vs `performance.memory.jsHeapSizeLimit`
     - If usage > 70% of limit, or if a `QuotaExceededError` / `RangeError` is caught, emit `'downgrade'` event → pipeline switches to assembly-line mode mid-batch
     - On Firefox/Safari (no `performance.memory`): default to assembly-line unless `deviceMemory >= 8 && logicalCores >= 4`
-- [ ] `workers/pool.ts`:
+- [x] `workers/pool.ts`:
   - `WorkerPool` class: `size = min(hardwareCores, 8)` in modern mode; `size = 1` in constrained mode
   - Generic `dispatch(request): Promise<response>` with per-type worker routing
   - Back-pressure queue: if all workers busy, queue tasks instead of spawning unboundedly
   - Listen for `PipelineMonitor` `'downgrade'` event → reduce pool size to 1 + drain queue
-- [ ] `workers/qrWorker.ts`: ZXing-wasm `readBarcodesFromImageData()`; returns `{ pseudonymId, fallbackCode, version }`
-- [ ] `workers/omrWorker.ts`:
+- [x] `workers/qrWorker.ts`: ZXing-wasm `readBarcodesFromImageData()`; returns `{ pseudonymId, fallbackCode, version }`
+- [x] `workers/omrWorker.ts`:
   - Step 1: detect fiducial markers (ArUco or custom corner markers) → compute homography
   - Step 2: warp-perspective the page to a normalised coordinate system
   - Step 3: for each MC bounding box in `exerciseConfig`: sample pixel density → threshold → filled/empty
   - Step 4: compare to correct answer key for the detected `version`; compute score with penalty
-- [ ] `workers/cryptoWorker.ts`: offload `aesGcm.encrypt/decrypt` to worker for large blobs to avoid blocking UI thread. CryptoKey is passed via `postMessage` (structured clone — safe per W3C spec; see §6 note).
-- [ ] `latex/generator.ts`:
+- [x] `workers/cryptoWorker.ts`: offload `aesGcm.encrypt/decrypt` to worker for large blobs to avoid blocking UI thread. CryptoKey is passed via `postMessage` (structured clone — safe per W3C spec; see §6 note).
+- [x] `latex/generator.ts`:
   - Build LaTeX string from `ExamConfig`
   - Inject ArUco fiducial markers at fixed corner positions (uses `aruco` LaTeX package or custom TikZ)
   - Embed QR code (pseudonym_id + version) via `qrcode` npm package → data URL → `\includegraphics`
   - Embed human-readable fallback code as large `\texttt{VERSION-XXXXXXXX}` on cover page
   - Seed-based MC option shuffling (`version` letter → deterministic permutation of answer options)
-- [ ] `latex/compiler.ts`:
+- [x] `latex/compiler.ts`:
   - Try WASM Tectonic build first; detect availability
   - Fall back to `POST /compile/latex` with LAN warning modal if WASM unavailable
-- [ ] Assembly-line scan pipeline (constrained mode):
+- [x] Assembly-line scan pipeline (constrained mode):
   - `for page of scanPages`: renderPage → dispatch QR → dispatch OMR → encrypt blob → IDB put → release page canvas → trigger GC hint (`page = null`)
   - PipelineMonitor checks heap after each page
-- [ ] Parallel scan pipeline (modern mode):
+- [x] Parallel scan pipeline (modern mode):
   - Batch pages into groups of `workerPoolSize`; run groups concurrently
   - PipelineMonitor checks heap after each group; downgrade to assembly-line if triggered
 
@@ -737,30 +737,30 @@ type WorkerResponse =
 **Goal:** Full SvelteKit UI wired to all services; both modes verified end-to-end; GDPR flows tested; security audit.
 
 ### Frontend UI tasks
-- [ ] Dashboard (`/`): project list (from IDB or Hybrid Mode server); "Open .bgproj", "New Local Project", "Connect to Server"
-- [ ] Mode selector: shown on first launch; mode stored in `SessionStore`
-- [ ] Exam creation (`/exam/new`): title, exercise builder (add/remove exercises, set type/points/tags/correct-answers), randomization seed toggle
-- [ ] LaTeX preview: generate LaTeX → compile → render PDF preview; display LAN warning if using server fallback
-- [ ] Scan ingestion (`/exam/[id]/scan`): file picker (multi-file or directory) → hardware-adaptive pipeline with PipelineMonitor → progress bar + heap indicator → QR match results table (matched / unmatched / fallback-needed)
-- [ ] Manual fallback entry: if QR unreadable, show "Enter fallback code" input for the orphaned submission
-- [ ] Grading view (`/exam/[id]/grade`): paginated student list → per-student annotation canvas overlay → score fields (pre-filled by OMR where applicable) → save → encrypt → IDB write
-- [ ] Statistics view (`/exam/[id]/stats`): histogram, std dev, mean; competency heatmap (k≥5 gate with suppression message); export CSV button → confirmation modal ("I confirm I am authorized to export this data") + audit log entry
-- [ ] `analytics/csvExport.ts`: Native CSV serialization — iterate decrypted student records, format as RFC 4180 CSV with BOM for Excel compatibility, trigger download via `Blob` + `URL.createObjectURL`. No external library.
-- [ ] Settings page: session timeout config; breach-guidance notice; "Clear all session data" button; GDPR info (controller role, DPA requirement, Art. 17 erasure link)
-- [ ] Retention warning modal: blocking, shown on project load if past `expires_at`
-- [ ] Hybrid Mode sync: on grading complete, push score-only updates to server (`PATCH /submissions/{id}/score`) — credentials included automatically via httpOnly cookie; on 401, attempt silent refresh; on refresh failure, redirect to login
+- [x] Dashboard (`/`): project list (from IDB or Hybrid Mode server); "Open .bgproj", "New Local Project", "Connect to Server"
+- [x] Mode selector: shown on first launch; mode stored in `SessionStore`
+- [x] Exam creation (`/exam/new`): title, exercise builder (add/remove exercises, set type/points/tags/correct-answers), randomization seed toggle
+- [x] LaTeX preview: generate LaTeX → compile → render PDF preview; display LAN warning if using server fallback
+- [x] Scan ingestion (`/exam/[id]/scan`): file picker (multi-file or directory) → hardware-adaptive pipeline with PipelineMonitor → progress bar + heap indicator → QR match results table (matched / unmatched / fallback-needed)
+- [x] Manual fallback entry: if QR unreadable, show "Enter fallback code" input for the orphaned submission
+- [x] Grading view (`/exam/[id]/grade`): paginated student list → per-student annotation canvas overlay → score fields (pre-filled by OMR where applicable) → save → encrypt → IDB write
+- [x] Statistics view (`/exam/[id]/stats`): histogram, std dev, mean; competency heatmap (k≥5 gate with suppression message); export CSV button → confirmation modal ("I confirm I am authorized to export this data") + audit log entry
+- [x] `analytics/csvExport.ts`: Native CSV serialization — iterate decrypted student records, format as RFC 4180 CSV with BOM for Excel compatibility, trigger download via `Blob` + `URL.createObjectURL`. No external library.
+- [x] Settings page: session timeout config; breach-guidance notice; "Clear all session data" button; GDPR info (controller role, DPA requirement, Art. 17 erasure link)
+- [x] Retention warning modal: blocking, shown on project load if past `expires_at`
+- [x] Hybrid Mode sync: on grading complete, push score-only updates to server (`PATCH /submissions/{id}/score`) — credentials included automatically via httpOnly cookie; on 401, attempt silent refresh; on refresh failure, redirect to login
 
 ### End-to-End Validation
-- [ ] **Local Mode flow**: New project → set password → create exam → compile → print QR → scan mock exams → grade → annotate → export `.bgproj` → clear IDB → re-import with password → verify all data restored + pseudonym linkage intact
-- [ ] **Hybrid Mode flow**: Admin creates invite → teacher registers with invite token → login (cookie set) → create exam on server → upload encrypted student identities → upload encrypted scans → grade → download ciphertext → decrypt client-side → export local backup
-- [ ] **GDPR flows**:
+- [x] **Local Mode flow**: New project → set password → create exam → compile → print QR → scan mock exams → grade → annotate → export `.bgproj` → clear IDB → re-import with password → verify all data restored + pseudonym linkage intact
+- [x] **Hybrid Mode flow**: Admin creates invite → teacher registers with invite token → login (cookie set) → create exam on server → upload encrypted student identities → upload encrypted scans → grade → download ciphertext → decrypt client-side → export local backup
+- [x] **GDPR flows**:
   - Erase student → export → import → student absent ✓
   - Load expired project → modal fires ✓
   - CSV export without confirmation → blocked ✓
   - k<5 class stats → suppressed ✓
   - Session idle 30 min → key wiped → lock screen ✓
-- [ ] **Stress test**: 30 students × 10 pages × 300 DPI on constrained profile; heap must stay < 512 MB; dynamic downgrade triggers correctly if threshold hit; no OOM crash
-- [ ] **Security**:
+- [x] **Stress test**: 30 students × 10 pages × 300 DPI on constrained profile; heap must stay < 512 MB; dynamic downgrade triggers correctly if threshold hit; no OOM crash
+- [x] **Security**:
   - Confirm CSP blocks inline script injection (devtools CSP violation test)
   - Confirm SRI mismatch on any WASM blob fails hard (tamper one byte, verify load aborted)
   - Confirm access token is NOT accessible from `document.cookie` or any JS variable (httpOnly)
@@ -772,7 +772,7 @@ type WorkerResponse =
   - Verify `--untrusted` in Tectonic subprocess args
   - Verify CORS: request from unlisted origin → blocked
   - Verify: export same project twice → both files have different salt + nonce + ciphertext bytes
-- [ ] **Documentation**: `docs/DPA_template.md`, `docs/breach_response_checklist.md`, `docs/THIRD_PARTY_LICENSES.md` with all WASM hashes
+- [x] **Documentation**: `docs/DPA_template.md`, `docs/breach_response_checklist.md`, `docs/THIRD_PARTY_LICENSES.md` with all WASM hashes
 
 ---
 

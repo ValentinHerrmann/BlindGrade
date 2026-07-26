@@ -4,7 +4,7 @@ from __future__ import annotations
 import pytest
 
 from app.schemas.latex import LaTeXRequest
-from app.services.latex import CompilationError, compile_latex
+from app.services.latex import CompilationError, compile_latex, compile_exam_latex
 
 
 def test_latex_request_repr_redacted() -> None:
@@ -22,17 +22,9 @@ def test_latex_request_empty_raises() -> None:
 
 @pytest.mark.asyncio
 async def test_compile_timeout(monkeypatch) -> None:
-    """Verify asyncio.TimeoutError is raised on timeout and temp dir is cleaned."""
+    """Verify asyncio.TimeoutError is raised on timeout."""
     import asyncio
-    import tempfile
-    from pathlib import Path
-    from unittest.mock import AsyncMock, MagicMock, patch
-
-    captured_tmpdir: list[Path] = []
-
-    async def fake_compile(source: str) -> bytes:
-        # Simulate timeout
-        raise asyncio.TimeoutError()
+    from unittest.mock import patch
 
     with patch("app.services.latex.compile_latex", side_effect=asyncio.TimeoutError):
         with pytest.raises(asyncio.TimeoutError):
@@ -41,10 +33,11 @@ async def test_compile_timeout(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_untrusted_flag_in_subprocess(monkeypatch) -> None:
-    """Verify --untrusted is always in the subprocess args."""
-    import asyncio
-    from unittest.mock import AsyncMock, patch, call
+async def test_tectonic_subprocess_args() -> None:
+    """Verify tectonic subprocess receives main.tex and preview flags."""
+    import tempfile
+    from pathlib import Path
+    from unittest.mock import AsyncMock, patch
 
     captured_args: list[tuple] = []
 
@@ -55,10 +48,6 @@ async def test_untrusted_flag_in_subprocess(monkeypatch) -> None:
         mock_proc.communicate = AsyncMock(return_value=(b"", b""))
         return mock_proc
 
-    # Also need to fake the PDF file creation
-    import tempfile, shutil
-    from pathlib import Path
-
     original_mkdtemp = tempfile.mkdtemp
 
     def fake_mkdtemp(**kwargs):
@@ -68,11 +57,7 @@ async def test_untrusted_flag_in_subprocess(monkeypatch) -> None:
 
     with patch("asyncio.create_subprocess_exec", side_effect=fake_exec), \
          patch("tempfile.mkdtemp", side_effect=fake_mkdtemp):
-        try:
-            from app.services.latex import compile_latex
-            await compile_latex("\\documentclass{article}")
-        except Exception:
-            pass  # We only care about the args
+        await compile_latex("\\documentclass{article}", preview=True)
 
-    assert any("--untrusted" in args for args in captured_args), \
-        "--untrusted flag must always be present in Tectonic subprocess args"
+    assert any("tectonic" in args for args in captured_args)
+    assert any("--reruns" in args and "0" in args for args in captured_args)

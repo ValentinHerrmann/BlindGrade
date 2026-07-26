@@ -1,19 +1,29 @@
-import { sveltekit } from '@sveltejs/vite-plugin-svelte';
+import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
+import wasm from 'vite-plugin-wasm';
+import topLevelAwait from 'vite-plugin-top-level-await';
 
 export default defineConfig({
-  plugins: [sveltekit()],
+  plugins: [wasm(), topLevelAwait(), sveltekit()],
+  test: {
+    alias: {
+      'argon2-browser': '/home/vale/_GITHUB/ValentinHerrmann/BlindGrade/frontend/tests/mocks/argon2Mock.ts',
+    },
+  },
   worker: {
     format: 'es',
   },
   optimizeDeps: {
-    exclude: ['argon2-browser'],  // WASM — don't pre-bundle
+    exclude: ['argon2-browser'],
+  },
+  ssr: {
+    external: ['argon2-browser'],
   },
   build: {
-    target: 'es2022',  // Supports top-level await needed by WASM modules
+    target: 'es2022',
     rollupOptions: {
+      external: [/.*\.wasm$/],
       output: {
-        // Generate stable hashes for SRI verification
         entryFileNames: 'assets/[name]-[hash].js',
         chunkFileNames: 'assets/[name]-[hash].js',
         assetFileNames: 'assets/[name]-[hash][extname]',

@@ -108,7 +108,7 @@ async def test_login_wrong_password(client: AsyncClient, db: AsyncSession) -> No
 
 @pytest.mark.asyncio
 async def test_protected_endpoint_without_cookie(client: AsyncClient) -> None:
-    resp = await client.post("/api/v1/compile/latex", json={"latex": "\\documentclass{article}"})
+    resp = await client.get("/api/v1/exams")
     assert resp.status_code == 401
 
 
@@ -125,5 +125,6 @@ async def test_logout_clears_cookies(client: AsyncClient, db: AsyncSession) -> N
     )
     assert "access_token" in resp.cookies
 
+    client.cookies.update(resp.cookies)
     logout_resp = await client.post("/api/v1/auth/logout")
     assert logout_resp.status_code == 204

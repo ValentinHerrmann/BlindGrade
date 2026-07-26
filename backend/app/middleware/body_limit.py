@@ -12,7 +12,7 @@ class BodyLimitMiddleware(BaseHTTPMiddleware):
     """
     Enforce per-route request body size limits.
 
-    Rejects oversized requests with HTTP 413 *before* the body is fully read.
+    Rejects oversized requests with HTTP 413.
     """
 
     def _get_limit(self, path: str, method: str) -> int:
@@ -34,19 +34,4 @@ class BodyLimitMiddleware(BaseHTTPMiddleware):
                 status_code=413,
                 content={"detail": "Payload too large.", "code": "ERR_PAYLOAD_TOO_LARGE"},
             )
-        # Stream body and enforce actual size
-        body = b""
-        async for chunk in request.stream():
-            body += chunk
-            if len(body) > limit:
-                return JSONResponse(
-                    status_code=413,
-                    content={"detail": "Payload too large.", "code": "ERR_PAYLOAD_TOO_LARGE"},
-                )
-
-        # Re-inject body so downstream handlers can read it
-        async def receive() -> dict:  # type: ignore[return]
-            return {"type": "http.request", "body": body, "more_body": False}
-
-        request._receive = receive  # type: ignore[attr-defined]
         return await call_next(request)  # type: ignore[operator,return-value]

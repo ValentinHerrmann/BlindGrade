@@ -25,6 +25,7 @@ RUN uv pip install --system --no-cache -e "."
 COPY app/ ./app/
 COPY alembic/ ./alembic/
 COPY alembic.ini ./
+COPY latex-assets/ ./latex-assets/
 
 EXPOSE 8000
 

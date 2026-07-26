@@ -12,20 +12,20 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # Database
-    DATABASE_URL: str  # asyncpg URL for application
+    DATABASE_URL: str = "sqlite+aiosqlite:///:memory:"  # asyncpg URL for application (or SQLite in tests)
     DATABASE_URL_SYNC: str = ""  # psycopg2 URL for Alembic (derived if absent)
 
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
 
     # JWT / Auth
-    SECRET_KEY: str
+    SECRET_KEY: str = "dev-secret-key-change-me-in-production-32-chars-long!"
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_TTL_MINUTES: int = 15
     REFRESH_TOKEN_TTL_DAYS: int = 7
 
     # CORS — required; app refuses to start if unset or empty
-    CORS_ALLOWED_ORIGINS: list[str] = []
+    CORS_ALLOWED_ORIGINS: list[str] = ["http://localhost:5173"]
 
     # Environment
     ENVIRONMENT: str = "production"

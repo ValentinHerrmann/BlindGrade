@@ -1,0 +1,152 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{sty/Loesung}[2026/06/23 Solutions macro definitions]
+
+\lstset{
+tabsize = 1, %% set tab space width
+keywordstyle = \color{purple}, %% set keyword color
+stringstyle = \color{green}, %% set string color
+rulecolor = \color{black}, %% set frame color to avoid being affected by text color
+breaklines = true, %% enable line breaking
+numberstyle = \footnotesize,
+language = Java , 
+firstnumber = last , 
+escapeinside={(*@}{@*)}
+}
+\newcommand*{\LoesungTitleExtensionText}{}
+\newcommand{\LoesungTitleExtension}[1]{%
+  \gdef\LoesungTitleExtensionText{%
+    \color{\LFarbe}%
+    \renewcommand{\umltextcolor}{blue}%
+    \renewcommand{\umldrawcolor}{blue}%
+    #1%
+    \renewcommand{\umltextcolor}{black}%
+    \renewcommand{\umldrawcolor}{black}%
+    \color{black}%
+  }%
+}
+
+\providecommand{\LSG}[2]{
+	\ifthenelse
+	{\boolean{Antworten}}
+	{
+        \textcolor{\LFarbe}{
+            \renewcommand{\umltextcolor}{\LFarbe}
+            \renewcommand{\umldrawcolor}{\LFarbe}
+            #1
+            \renewcommand{\umltextcolor}{black}
+            \renewcommand{\umldrawcolor}{black}
+        }
+    }
+	{
+        \setbox0=\vbox{#1}%
+        #2
+    }
+}
+
+%Befehl für ein Leerfeld mit fester höhe
+\newcommand{\Leer}[1]{\vspace{#1}}
+
+\newcommand{\Loesung}[1]{
+	\LSG{
+		#1
+	}{
+
+	}
+}
+
+% Loesung, die normalen Text ersetzt
+\newcommand{\LoesungReplace}[2]{%
+	\LSG{
+		#1
+	}{
+		#2
+	}
+}
+
+%Loesung bzw. Leerfeld
+\newcommand{\LoesungLeer}[2]{
+	\LSG{
+		#1
+	}{
+		\Leer{#2}
+	}
+}
+
+% Verschiedene Bilder in Angabe und Loesung
+\newcommand{\LoesungImg}[3]{
+    \ifthenelse
+	{\boolean{Antworten}}
+	{\includegraphics[width=#3]{#1}}
+	{\includegraphics[width=#3]{#2}}
+}
+
+%Loesung für Lückentext
+\newcommand{\LoesungLuecke}[2]{
+	\LSG{
+		#1
+	}{
+		\noindent\rule{#2}{0.5pt}
+	}
+}
+
+%Loesung bzw. Karo
+\newcommand{\LoesungKaro}[2] {
+	\LSG{
+		#1
+	}{
+		\kariert{#2}
+	}
+}
+
+%Loesung bzw. Linien
+\newcommand{\LoesungLine}[2]{
+	\LSG{
+		#1
+	}{
+		\liniert{#2}
+	}
+}
+
+\newcommand{\LoesungMulti}[2][2]{%
+  \ifnum#1>1
+    \begin{multicols}{#1}
+      \begin{description}
+        #2
+      \end{description}
+    \end{multicols}
+  \else
+    \begin{description}
+      #2
+    \end{description}
+  \fi
+}
+
+\newcommand{\LoesungForm}[2]
+{
+   	\begin{Form} \color{\LFarbe}
+		\TextField[bordercolor={},backgroundcolor={},width=#1, multiline=#2]{}\color{black}
+	\end{Form}
+}
+
+\newcommand\kariert[2][0.5cm]{% 
+	\begin{tikzpicture}[gray,step=#1]
+	\pgfmathtruncatemacro\anzahl{(\linewidth-\pgflinewidth)/#1} % maximale Anzahl Kästchen pro Zeile
+	\draw (0,0) rectangle (\anzahl*#1,#2*#1) (0,0) grid (\anzahl*#1,#2*#1);
+	\end{tikzpicture} 
+}
+
+\newcommand{\multi}{\item[$\circ$]}
+\newcommand{\Lmulti}{
+	\ifthenelse
+	{\boolean{Antworten}}
+	{\xdef\TaskScore{\fpeval{\TaskScore + 1}}  \color{\LFarbe}\item[X]\color{black}}
+	{\xdef\TaskScore{\fpeval{\TaskScore + 1}} \item[$\circ$]}
+ }
+
+\newcommand\liniert[2][1.2cm]{% 
+	\begin{tikzpicture}[gray]
+	\path[use as bounding box](0,0)rectangle(\linewidth,-#2*#1-0.5\pgflinewidth); 
+	\foreach \n in {1,...,#2}\draw(0 ,-#1*\n )--(\linewidth,-#1*\n ); 
+	\end{tikzpicture}}
+
+\endinput

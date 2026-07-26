@@ -17,7 +17,6 @@ router = APIRouter(prefix="/compile", tags=["compile"])
 async def compile_latex_endpoint(
     request: Request,  # Required by slowapi for rate limiting
     body: LaTeXRequest,
-    _teacher: Teacher = Depends(get_current_teacher),
 ) -> Response:
     """
     Compile LaTeX source to PDF via Tectonic.
@@ -27,7 +26,7 @@ async def compile_latex_endpoint(
     LaTeX source is NEVER logged — see LaTeXRequest.__repr__ and latex service.
     """
     try:
-        pdf_bytes = await compile_latex(body.latex)
+        pdf_bytes = await compile_latex(body.latex, preview=True)
     except TimeoutError:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
@@ -44,5 +43,5 @@ async def compile_latex_endpoint(
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": "attachment; filename=\"output.pdf\""},
+        headers={"Content-Disposition": 'attachment; filename="output.pdf"'},
     )

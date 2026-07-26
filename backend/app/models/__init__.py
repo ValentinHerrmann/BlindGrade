@@ -1,6 +1,7 @@
 """Models package — import all for Alembic autogenerate discovery."""
 from app.models.audit_log import AuditLog
 from app.models.exam import Exam
+from app.models.exam_exercise import ExamExercise
 from app.models.exercise import Exercise
 from app.models.invite import InviteToken
 from app.models.refresh_token import RefreshToken
@@ -14,6 +15,7 @@ __all__ = [
     "RefreshToken",
     "Exam",
     "Exercise",
+    "ExamExercise",
     "StudentIdentity",
     "ScanSubmission",
     "AuditLog",

@@ -1,0 +1,44 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{sty/packages}[2026/06/23 Consolidated packages for school templates]
+
+\RequirePackage{iftex}
+\ifPDFTeX
+  \RequirePackage[utf8]{inputenc}
+\fi
+
+\RequirePackage{xcolor}
+\RequirePackage{amsmath}
+\RequirePackage{amsfonts}
+\RequirePackage{amssymb}
+\RequirePackage{graphicx}
+\RequirePackage[normalem]{ulem}
+\RequirePackage{tabularx}
+\RequirePackage{ragged2e}
+\newcolumntype{C}{>{\Centering\hspace{0pt}}X}
+\RequirePackage{etoolbox}
+\RequirePackage{multicol}
+\RequirePackage{fancyhdr}
+\RequirePackage{comment}
+\RequirePackage[T1]{fontenc}
+\RequirePackage{libertine}
+\RequirePackage{ifthen}
+\RequirePackage[left=1cm, right=1cm, top=0.7cm,bottom=0.7cm,headheight=30pt,headsep=0pt,includehead=true]{geometry}
+\RequirePackage{struktex}
+\RequirePackage{kantlipsum}
+\RequirePackage[export]{adjustbox} % 'export' allows valign in \includegraphics
+\RequirePackage{wrapfig}
+\RequirePackage{xfp}
+\RequirePackage{titlesec}
+\RequirePackage{silence}
+\RequirePackage{tikz}
+\RequirePackage{listings}
+\RequirePackage{svg}
+
+\RequirePackage{sty/tikz-uml}
+\RequirePackage{sty/custom-pgf-umlcd}
+
+\renewcommand{\umltextcolor}{black}
+\renewcommand{\umlfillcolor}{white}
+\renewcommand{\umldrawcolor}{black}
+
+\endinput
