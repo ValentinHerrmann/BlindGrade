@@ -220,3 +220,4 @@ __marimo__/
 frontend/node_modules
 frontend/.svelte-kit
 latex-sample-project
+backend/blindgrade.db

@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import math
 import uuid
+from typing import Annotated
+from typing import Literal, cast
 
 from fastapi import APIRouter, Depends, Query, status
+from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,12 +16,65 @@ from app.dependencies import get_admin_teacher
 from app.models.audit_log import AuditLog
 from app.models.scan_submission import ScanSubmission
 from app.models.teacher import Teacher
-from app.schemas.admin import AuditLogResponse, ClassStatsResponse
+from app.schemas.admin import (
+    AdminCreateUserRequest,
+    AdminCreateUserResponse,
+    AuditLogResponse,
+    ClassStatsResponse,
+)
+from app.services import audit as audit_svc
+from app.services.crypto import hash_password
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 # Minimum sample size for k-anonymity score statistics
 K_ANONYMITY_THRESHOLD = 5
+
+
+@router.post("/users", status_code=status.HTTP_201_CREATED)
+async def create_user(
+    body: AdminCreateUserRequest,
+    admin: Annotated[Teacher, Depends(get_admin_teacher)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> AdminCreateUserResponse:
+    """
+    Create a teacher/admin account (Admin only).
+
+    Password is Argon2id-hashed server-side. Duplicate emails are rejected.
+    """
+    normalized_email = body.email.strip().lower()
+    existing = await db.execute(select(Teacher).where(func.lower(Teacher.email) == normalized_email))
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A user with this email already exists.",
+        )
+
+    user = Teacher(
+        email=normalized_email,
+        password_hash=hash_password(body.password),
+        role=body.role,
+    )
+    db.add(user)
+    await db.flush()
+    await db.refresh(user)
+
+    await audit_svc.write(
+        db,
+        teacher_id=admin.id,
+        teacher_email=admin.email,
+        action="CREATE_USER",
+        target_id=str(user.id),
+    )
+    # Ensure DB constraint issues are surfaced before sending a success response.
+    await db.flush()
+
+    return AdminCreateUserResponse(
+        id=user.id,
+        email=user.email,
+        role=cast(Literal["teacher", "admin"], user.role),
+        created_at=user.created_at,
+    )
 
 
 @router.get("/stats/{exam_id}", response_model=ClassStatsResponse)

@@ -142,6 +142,72 @@ async def test_admin_stats_k_anonymity(client: AsyncClient, db: AsyncSession) ->
 
 
 @pytest.mark.asyncio
+async def test_admin_can_create_teacher_user(client: AsyncClient, db: AsyncSession) -> None:
+    await _create_teacher_and_login(client, db, "admin-create@example.com", role="admin")
+
+    create_resp = await client.post(
+        "/api/v1/admin/users",
+        json={
+            "email": "newteacher@example.com",
+            "password": "StrongPassw0rd!",
+            "role": "teacher",
+        },
+    )
+    assert create_resp.status_code == 201
+    body = create_resp.json()
+    assert body["email"] == "newteacher@example.com"
+    assert body["role"] == "teacher"
+
+    # Verify created account can authenticate
+    login_resp = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "newteacher@example.com", "password": "StrongPassw0rd!"},
+    )
+    assert login_resp.status_code == 200
+    assert "access_token" in login_resp.cookies
+
+
+@pytest.mark.asyncio
+async def test_non_admin_cannot_create_users(client: AsyncClient, db: AsyncSession) -> None:
+    await _create_teacher_and_login(client, db, "regular-teacher@example.com", role="teacher")
+
+    resp = await client.post(
+        "/api/v1/admin/users",
+        json={
+            "email": "blocked@example.com",
+            "password": "StrongPassw0rd!",
+            "role": "teacher",
+        },
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_admin_create_user_duplicate_email_conflict(client: AsyncClient, db: AsyncSession) -> None:
+    await _create_teacher_and_login(client, db, "admin-duplicate@example.com", role="admin")
+
+    first = await client.post(
+        "/api/v1/admin/users",
+        json={
+            "email": "dup@example.com",
+            "password": "StrongPassw0rd!",
+            "role": "teacher",
+        },
+    )
+    assert first.status_code == 201
+
+    second = await client.post(
+        "/api/v1/admin/users",
+        json={
+            "email": "dup@example.com",
+            "password": "StrongPassw0rd!",
+            "role": "teacher",
+        },
+    )
+    assert second.status_code == 409
+
+
+@pytest.mark.asyncio
 async def test_exercise_versions_and_variants(client: AsyncClient, db: AsyncSession) -> None:
     await _create_teacher_and_login(client, db, "exerciseteacher@example.com")
 

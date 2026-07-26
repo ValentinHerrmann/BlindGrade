@@ -21,17 +21,19 @@
     isLoading = true;
     try {
       if (mode === 'hybrid') {
-        if (!email) {
+        const normalizedEmail = email.trim().toLowerCase();
+        if (!normalizedEmail) {
           errorMsg = 'Please enter your email.';
           isLoading = false;
           return;
         }
         // Authenticate with server to get httpOnly cookies
         const user = await api.post<{ email: string; role: 'teacher' | 'admin' }>('/auth/login', {
-          email,
+          email: normalizedEmail,
           password,
         });
         sessionStore.setHybridUser(user.email, user.role);
+        email = normalizedEmail;
       }
 
       // Derive local session keys

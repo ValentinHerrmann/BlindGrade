@@ -22,7 +22,15 @@ class AuditLog(Base):
     # Immutable snapshot — survives teacher account deletion for compliance.
     teacher_email: Mapped[str] = mapped_column(String(255), nullable=False)
     action: Mapped[str] = mapped_column(
-        Enum("LOGIN", "EXPORT", "DELETE", "VIEW", "EXTEND_RETENTION", name="audit_action"),
+        Enum(
+            "LOGIN",
+            "EXPORT",
+            "DELETE",
+            "VIEW",
+            "EXTEND_RETENTION",
+            "CREATE_USER",
+            name="audit_action",
+        ),
         nullable=False,
     )
     target_hash: Mapped[str | None] = mapped_column(

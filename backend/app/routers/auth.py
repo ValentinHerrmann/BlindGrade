@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import jwt
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -65,6 +65,7 @@ async def register(
     On success, sets auth cookies and returns { email, role }.
     """
     now = datetime.now(tz=timezone.utc)
+    normalized_email = body.email.strip().lower()
 
     # Validate invite token
     token_hash = hash_token(body.invite_token)
@@ -84,7 +85,9 @@ async def register(
         )
 
     # Check email uniqueness
-    existing = await db.execute(select(Teacher).where(Teacher.email == body.email))
+    existing = await db.execute(
+        select(Teacher).where(func.lower(Teacher.email) == normalized_email)
+    )
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -93,7 +96,7 @@ async def register(
         )
 
     teacher = Teacher(
-        email=body.email,
+        email=normalized_email,
         password_hash=hash_password(body.password),
         role="teacher",
     )
@@ -149,7 +152,8 @@ async def login(
 
     Response body contains only { email, role } — never the token value.
     """
-    result = await db.execute(select(Teacher).where(Teacher.email == body.email))
+    normalized_email = body.email.strip().lower()
+    result = await db.execute(select(Teacher).where(func.lower(Teacher.email) == normalized_email))
     teacher = result.scalar_one_or_none()
 
     # Constant-time: always call verify_password even if teacher not found

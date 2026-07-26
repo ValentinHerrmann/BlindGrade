@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { registerHygieneListeners } from '$lib/db/hygiene';
-  import { sessionStore, isUnlocked } from '$lib/stores/session';
+  import { onMount } from "svelte";
+  import { registerHygieneListeners } from "$lib/db/hygiene";
+  import { sessionStore, isUnlocked } from "$lib/stores/session";
 
   onMount(() => {
     registerHygieneListeners();
@@ -9,7 +9,7 @@
 
   function handleLock() {
     sessionStore.lock();
-    window.location.href = '/unlock';
+    window.location.href = "/unlock";
   }
 </script>
 
@@ -22,6 +22,9 @@
       <nav class="nav-links">
         <a href="/">Dashboard</a>
         <a href="/exercises">Exercise Library</a>
+        {#if $sessionStore.mode === "hybrid" && $sessionStore.role === "admin"}
+          <a href="/admin/users">User Management</a>
+        {/if}
         <a href="/settings">Settings</a>
       </nav>
       <div class="session-info">
@@ -43,7 +46,13 @@
   :global(body) {
     margin: 0;
     padding: 0;
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family:
+      system-ui,
+      -apple-system,
+      BlinkMacSystemFont,
+      "Segoe UI",
+      Roboto,
+      sans-serif;
     background-color: #0f172a;
     color: #f8fafc;
   }
