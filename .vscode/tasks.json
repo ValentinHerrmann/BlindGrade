@@ -1,0 +1,11 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Wait 1s",
+      "type": "shell",
+      "command": "sleep 1",
+      "problemMatcher": []
+    }
+  ]
+}

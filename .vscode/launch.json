@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "FastAPI: Debug Backend",
+      "name": "Backend",
       "type": "debugpy",
       "request": "launch",
       "module": "uvicorn",
@@ -16,27 +16,10 @@
         "CORS_ALLOWED_ORIGINS": "[\"http://localhost:5173\"]",
         "ENVIRONMENT": "development"
       },
-      "jinja": true,
       "justMyCode": true
     },
     {
-      "name": "Python: Debug Pytest (Backend)",
-      "type": "debugpy",
-      "request": "launch",
-      "module": "pytest",
-      "args": ["${workspaceFolder}/backend/tests"],
-      "cwd": "${workspaceFolder}/backend",
-      "env": {
-        "DATABASE_URL": "sqlite+aiosqlite:///:memory:",
-        "SECRET_KEY": "test-secret-key-not-for-production",
-        "CORS_ALLOWED_ORIGINS": "[\"http://localhost:5173\"]",
-        "ENVIRONMENT": "development"
-      },
-      "console": "integratedTerminal",
-      "justMyCode": true
-    },
-    {
-      "name": "SvelteKit: Debug Vite Frontend (Server)",
+      "name": "Frontend Server",
       "type": "node",
       "request": "launch",
       "runtimeExecutable": "npm",
@@ -45,29 +28,18 @@
       "console": "integratedTerminal"
     },
     {
-      "name": "Chrome: Debug Frontend (Browser)",
+      "name": "Frontend Browser",
       "type": "chrome",
       "request": "launch",
       "url": "http://localhost:5173",
-      "webRoot": "${workspaceFolder}/frontend"
-    },
-    {
-      "name": "Vitest: Debug Frontend Tests",
-      "type": "node",
-      "request": "launch",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": ["vitest", "run"],
-      "cwd": "${workspaceFolder}/frontend",
-      "console": "integratedTerminal"
+      "webRoot": "${workspaceFolder}/frontend",
+      "preLaunchTask": "Wait 1s"
     }
   ],
   "compounds": [
     {
-      "name": "SvelteKit: Debug Frontend (Server + Browser)",
-      "configurations": [
-        "SvelteKit: Debug Vite Frontend (Server)",
-        "Chrome: Debug Frontend (Browser)"
-      ],
+      "name": "Debug",
+      "configurations": ["Backend", "Frontend Server", "Frontend Browser"],
       "stopAll": true
     }
   ]
