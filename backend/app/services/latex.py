@@ -54,39 +54,44 @@ async def compile_latex(
         tex_file = tmpdir / "main.tex"
         tex_file.write_text(latex_source, encoding="utf-8")
 
-        cmd = ["tectonic"]
-        if preview:
-            cmd.extend(["--reruns", "0"])
-        cmd.extend([
+        cmd = [
+            "tectonic",
+            "-k",
             str(tex_file),
-            "--outdir", str(tmpdir),
+            "--outdir",
+            str(tmpdir),
             "--keep-logs",
-        ])
+        ]
 
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(tmpdir),
-        )
-
-        try:
-            _stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
+        passes = 2
+        for pass_idx in range(passes):
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(tmpdir),
             )
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.communicate()
-            raise
 
-        if proc.returncode != 0:
-            err_snippet = stderr.decode(errors="replace")[:1000]
-            logger.warning(
-                "Tectonic compilation failed (exit %d). stderr: %s",
-                proc.returncode,
-                err_snippet,
-            )
-            raise CompilationError(f"Tectonic compilation failed (exit {proc.returncode}): {err_snippet}")
+            try:
+                _stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(), timeout=timeout
+                )
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.communicate()
+                raise
+
+            if proc.returncode != 0:
+                err_snippet = stderr.decode(errors="replace")[:1000]
+                logger.warning(
+                    "Tectonic compilation pass %d failed (exit %d). stderr: %s",
+                    pass_idx + 1,
+                    proc.returncode,
+                    err_snippet,
+                )
+                raise CompilationError(
+                    f"Tectonic compilation pass {pass_idx + 1} failed (exit {proc.returncode}): {err_snippet}"
+                )
 
         pdf_path = tmpdir / "main.pdf"
         if not pdf_path.exists():

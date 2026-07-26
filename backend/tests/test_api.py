@@ -139,3 +139,54 @@ async def test_admin_stats_k_anonymity(client: AsyncClient, db: AsyncSession) ->
     assert stats1.status_code == 200
     assert stats1.json()["k_anonymity_satisfied"] is False
     assert stats1.json()["mean_score"] is None
+
+
+@pytest.mark.asyncio
+async def test_exercise_versions_and_variants(client: AsyncClient, db: AsyncSession) -> None:
+    await _create_teacher_and_login(client, db, "exerciseteacher@example.com")
+
+    # Create base exercise
+    create_res = await client.post(
+        "/api/v1/exercises",
+        json={
+            "name": "Typ1_Vererbung",
+            "topic_tag": "_Vererbung",
+            "latex_body": "\\begin{Aufgabe}[10] Vererbung \\BE \\hBE \\end{Aufgabe}",
+            "variant_key": "Moebel",
+        },
+    )
+    assert create_res.status_code == 201
+    ex1 = create_res.json()
+    assert ex1["version"] == 1
+    assert ex1["max_points"] == 10.0
+    assert ex1["variant_key"] == "Moebel"
+    ex1_id = ex1["id"]
+
+    # Create new version (correction)
+    ver_res = await client.post(
+        f"/api/v1/exercises/{ex1_id}/new-version",
+        json={
+            "latex_body": "\\begin{Aufgabe}[12] Vererbung Updated \\BE \\hBE \\qBE \\end{Aufgabe}",
+        },
+    )
+    assert ver_res.status_code == 201
+    ex1_v2 = ver_res.json()
+    assert ex1_v2["version"] == 2
+    assert ex1_v2["max_points"] == 12.0
+    assert ex1_v2["is_current"] is True
+
+    # Create parallel variant (Fahrzeug)
+    var_res = await client.post(
+        f"/api/v1/exercises/{ex1_id}/new-variant",
+        json={
+            "name": "Typ1_Fahrzeug",
+            "topic_tag": "_Vererbung",
+            "latex_body": "\\begin{Aufgabe}[10] Fahrzeug \\BE \\end{Aufgabe}",
+            "variant_key": "Fahrzeug",
+        },
+    )
+    assert var_res.status_code == 201
+    variant_ex = var_res.json()
+    assert variant_ex["variant_key"] == "Fahrzeug"
+    assert variant_ex["exercise_group_id"] == ex1["exercise_group_id"]
+

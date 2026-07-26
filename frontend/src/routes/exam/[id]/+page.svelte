@@ -27,7 +27,7 @@
   async function loadExam(id: string) {
     try {
       if ($sessionStore.mode === 'hybrid') {
-        const remoteExam = await api.get(`/exams/${id}`);
+        const remoteExam = (await api.get(`/exams/${id}`)) as any;
         exam = {
           id: remoteExam.id,
           teacherId: remoteExam.teacher_id,
@@ -195,6 +195,151 @@ ${exerciseInputs}
       isCompiling = false;
     }
   }
+
+  let isEditingMetadata = false;
+  let editTitle = '';
+  let editTestart = '';
+  let editKlasse = '';
+  let editDatum = '';
+  let editNr = '';
+  let editFach = '';
+  let editLehrernachname = '';
+  let editInfoText = '';
+  let editRetentionUntil = '';
+
+  let isLibraryModalOpen = false;
+  let libraryExercises: ExerciseRecord[] = [];
+  let selectedLibraryIds: string[] = [];
+  let librarySearch = '';
+
+  function openMetadataEditor() {
+    if (!exam) return;
+    editTitle = exam.title;
+    editTestart = exam.testart || 'Kurzarbeit';
+    editKlasse = exam.klasse || '';
+    editDatum = exam.datum || '';
+    editNr = exam.nr || '1';
+    editFach = exam.fach || 'Informatik';
+    editLehrernachname = exam.lehrernachname || '';
+    editInfoText = exam.infoText || '';
+    editRetentionUntil = exam.retentionUntil;
+    isEditingMetadata = true;
+  }
+
+  async function handleSaveMetadata() {
+    if (!exam) return;
+    try {
+      if ($sessionStore.mode === 'hybrid') {
+        await api.patch(`/exams/${exam.id}`, {
+          title: editTitle,
+          testart: editTestart,
+          klasse: editKlasse,
+          datum: editDatum,
+          nr: editNr,
+          fach: editFach,
+          lehrernachname: editLehrernachname,
+          info_text: editInfoText,
+          retention_until: editRetentionUntil,
+        });
+      }
+
+      exam.title = editTitle;
+      exam.testart = editTestart;
+      exam.klasse = editKlasse;
+      exam.datum = editDatum;
+      exam.nr = editNr;
+      exam.fach = editFach;
+      exam.lehrernachname = editLehrernachname;
+      exam.infoText = editInfoText;
+      exam.retentionUntil = editRetentionUntil;
+      await db.exams.put(exam);
+
+      isEditingMetadata = false;
+      alert('Exam details updated successfully.');
+    } catch (err: any) {
+      alert(`Failed to save exam details: ${err.message}`);
+    }
+  }
+
+  async function openLibraryModal() {
+    try {
+      if ($sessionStore.mode === 'hybrid') {
+        const remoteExs = (await api.get('/exercises')) as any[];
+        libraryExercises = remoteExs.map((e: any) => ({
+          id: e.id,
+          teacherId: e.teacher_id,
+          name: e.name,
+          topicTag: e.topic_tag,
+          latexBody: e.latex_body,
+          maxPoints: e.max_points,
+          version: e.version || 1,
+          variantKey: e.variant_key,
+          isCurrent: e.is_current,
+          questionType: 'free_text',
+          penalty: 0,
+        }));
+      } else {
+        libraryExercises = await db.exercises.toArray();
+      }
+      selectedLibraryIds = exercises.map((e) => e.id);
+      isLibraryModalOpen = true;
+    } catch (err) {
+      console.error('Failed to load library exercises:', err);
+    }
+  }
+
+  function moveExerciseOrder(index: number, direction: 'up' | 'down') {
+    const targetIdx = direction === 'up' ? index - 1 : index + 1;
+    if (targetIdx < 0 || targetIdx >= exercises.length) return;
+    const copy = [...exercises];
+    [copy[index], copy[targetIdx]] = [copy[targetIdx], copy[index]];
+    exercises = copy.map((ex, idx) => ({ ...ex, orderIndex: idx + 1 }));
+    saveExerciseLinks();
+  }
+
+  function removeExerciseLink(id: string) {
+    exercises = exercises.filter((ex) => ex.id !== id).map((ex, idx) => ({ ...ex, orderIndex: idx + 1 }));
+    saveExerciseLinks();
+  }
+
+  async function saveExerciseLinks() {
+    if (!exam) return;
+    const exerciseIds = exercises.map((e) => e.id);
+    try {
+      if ($sessionStore.mode === 'hybrid') {
+        await api.patch(`/exams/${exam.id}`, { exercise_ids: exerciseIds });
+      }
+
+      await db.examExercises.where('examId').equals(exam.id).delete();
+      const links = exercises.map((ex, idx) => ({
+        examId: exam!.id,
+        exerciseId: ex.id,
+        orderIndex: idx + 1,
+      }));
+      await db.examExercises.bulkPut(links);
+    } catch (err) {
+      console.error('Failed to update exercise links:', err);
+    }
+  }
+
+  function toggleLibrarySelection(id: string) {
+    if (selectedLibraryIds.includes(id)) {
+      selectedLibraryIds = selectedLibraryIds.filter((i) => i !== id);
+    } else {
+      selectedLibraryIds = [...selectedLibraryIds, id];
+    }
+  }
+
+  function applyLibrarySelection() {
+    const newSelected = selectedLibraryIds
+      .map((id) => libraryExercises.find((ex) => ex.id === id))
+      .filter((ex): ex is ExerciseRecord => Boolean(ex))
+      .map((ex, idx) => ({ ...ex, orderIndex: idx + 1 }));
+
+    exercises = newSelected;
+    saveExerciseLinks();
+    isLibraryModalOpen = false;
+  }
 </script>
 
 <div class="exam-detail-page">
@@ -209,12 +354,61 @@ ${exerciseInputs}
         </span>
       </div>
       <div class="header-btns">
+        <button class="edit-btn" on:click={openMetadataEditor}>✏️ Edit Exam Details</button>
         <button class="delete-btn" on:click={handleDeleteExam}>Delete Exam</button>
         <button class="export-btn" on:click={handleExportArchive} disabled={isExporting}>
           {isExporting ? 'Packing...' : 'Export .bgproj Archive'}
         </button>
       </div>
     </div>
+
+    {#if isEditingMetadata}
+      <div class="metadata-editor-card">
+        <h3>Edit Exam Metadata</h3>
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="editTitle">Exam Title</label>
+            <input id="editTitle" type="text" bind:value={editTitle} />
+          </div>
+          <div class="form-group">
+            <label for="editTestart">Testart</label>
+            <input id="editTestart" type="text" bind:value={editTestart} />
+          </div>
+          <div class="form-group">
+            <label for="editKlasse">Klasse</label>
+            <input id="editKlasse" type="text" bind:value={editKlasse} />
+          </div>
+          <div class="form-group">
+            <label for="editDatum">Datum / Dauer</label>
+            <input id="editDatum" type="text" bind:value={editDatum} />
+          </div>
+          <div class="form-group">
+            <label for="editNr">Prüfungsnummer (Nr)</label>
+            <input id="editNr" type="text" bind:value={editNr} />
+          </div>
+          <div class="form-group">
+            <label for="editFach">Fach</label>
+            <input id="editFach" type="text" bind:value={editFach} />
+          </div>
+          <div class="form-group">
+            <label for="editLehrernachname">Lehrernachname</label>
+            <input id="editLehrernachname" type="text" bind:value={editLehrernachname} />
+          </div>
+          <div class="form-group">
+            <label for="editRetention">Retention Until</label>
+            <input id="editRetention" type="date" bind:value={editRetentionUntil} />
+          </div>
+        </div>
+        <div class="form-group full-width">
+          <label for="editInfoText">Info Text (LaTeX list)</label>
+          <textarea id="editInfoText" rows="4" bind:value={editInfoText}></textarea>
+        </div>
+        <div class="editor-actions">
+          <button class="cancel-btn" on:click={() => (isEditingMetadata = false)}>Cancel</button>
+          <button class="save-btn" on:click={handleSaveMetadata}>Save Changes</button>
+        </div>
+      </div>
+    {/if}
 
     {#if exportSuccess}
       <div class="success-banner">.bgproj archive successfully packed and downloaded.</div>
@@ -258,18 +452,112 @@ ${exerciseInputs}
     </div>
 
     <div class="exercises-summary">
-      <h3>Configured Exercises ({exercises.length})</h3>
-      <ul>
-        {#each exercises as ex}
-          <li>
-            <span>Question {ex.orderIndex}: {ex.name || ex.title || 'Untitled'} ({ex.topicTag || 'General'})</span>
-            <span class="pts">{ex.maxPoints} Pkt</span>
-          </li>
-        {/each}
-      </ul>
+      <div class="section-header">
+        <h3>Configured Exercises ({exercises.length})</h3>
+        <button class="add-library-btn" on:click={openLibraryModal}>➕ Manage / Link Exercises</button>
+      </div>
+
+      {#if exercises.length === 0}
+        <p class="empty-notice">No exercises linked to this exam yet. Click "Manage / Link Exercises" to add exercises from your library.</p>
+      {:else}
+        <ul class="exercise-list">
+          {#each exercises as ex, idx}
+            <li class="exercise-item">
+              <div class="ex-info">
+                <span class="ex-num">Question {idx + 1}:</span>
+                <span class="ex-title">{ex.name || ex.title || 'Untitled'}</span>
+                {#if ex.topicTag}
+                  <span class="topic-tag">{ex.topicTag}</span>
+                {/if}
+                {#if ex.variantKey}
+                  <span class="variant-tag">Variant: {ex.variantKey}</span>
+                {/if}
+                <span class="ver-tag">v{ex.version || 1}</span>
+              </div>
+              <div class="ex-actions">
+                <span class="pts">{ex.maxPoints} Pkt</span>
+                <button
+                  class="icon-btn"
+                  disabled={idx === 0}
+                  on:click={() => moveExerciseOrder(idx, 'up')}
+                  title="Move Up"
+                >
+                  ▲
+                </button>
+                <button
+                  class="icon-btn"
+                  disabled={idx === exercises.length - 1}
+                  on:click={() => moveExerciseOrder(idx, 'down')}
+                  title="Move Down"
+                >
+                  ▼
+                </button>
+                <button
+                  class="icon-btn delete"
+                  on:click={() => removeExerciseLink(ex.id)}
+                  title="Remove from Exam"
+                >
+                  ✕
+                </button>
+              </div>
+            </li>
+          {/each}
+        </ul>
+      {/if}
     </div>
   {/if}
 </div>
+
+{#if isLibraryModalOpen}
+  <div
+    class="modal-backdrop"
+    role="button"
+    tabindex="-1"
+    on:click|self={() => (isLibraryModalOpen = false)}
+    on:keydown|self={(e) => e.key === 'Escape' && (isLibraryModalOpen = false)}
+  >
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Link Exercises from Library</h3>
+        <button class="close-btn" on:click={() => (isLibraryModalOpen = false)}>✕</button>
+      </div>
+
+      <div class="modal-body">
+        <input
+          type="text"
+          class="search-input"
+          bind:value={librarySearch}
+          placeholder="Search by name, topic, or content..."
+        />
+
+        <div class="library-picker-list">
+          {#each libraryExercises.filter((ex) => !librarySearch || (ex.name && ex.name.toLowerCase().includes(librarySearch.toLowerCase())) || (ex.topicTag && ex.topicTag.toLowerCase().includes(librarySearch.toLowerCase()))) as ex}
+            <label class="picker-item">
+              <input
+                type="checkbox"
+                checked={selectedLibraryIds.includes(ex.id)}
+                on:change={() => toggleLibrarySelection(ex.id)}
+              />
+              <div class="picker-info">
+                <strong>{ex.name || 'Untitled'}</strong>
+                <span class="meta-row">
+                  {#if ex.topicTag}<span class="topic">{ex.topicTag}</span>{/if}
+                  {#if ex.variantKey}<span class="variant">{ex.variantKey}</span>{/if}
+                  <span class="pts">{ex.maxPoints} Pkt</span>
+                </span>
+              </div>
+            </label>
+          {/each}
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="cancel-btn" on:click={() => (isLibraryModalOpen = false)}>Cancel</button>
+        <button class="save-btn" on:click={applyLibrarySelection}>Apply Linked Exercises</button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .exam-detail-page {
@@ -310,6 +598,9 @@ ${exerciseInputs}
     font-weight: 600;
     cursor: pointer;
   }
+  .delete-btn:hover {
+    background: #dc2626;
+  }
 
   .export-btn {
     padding: 0.625rem 1.25rem;
@@ -319,6 +610,9 @@ ${exerciseInputs}
     border-radius: 6px;
     font-weight: 600;
     cursor: pointer;
+  }
+  .export-btn:hover {
+    background: #0369a1;
   }
 
   .pdf-compile-section {
@@ -356,7 +650,6 @@ ${exerciseInputs}
     font-weight: 600;
     cursor: pointer;
   }
-
   .compile-btn:hover {
     background: #0369a1;
   }
@@ -370,7 +663,6 @@ ${exerciseInputs}
     font-weight: 600;
     cursor: pointer;
   }
-
   .solution-btn:hover {
     background: #059669;
   }
@@ -395,7 +687,7 @@ ${exerciseInputs}
     border: 1px solid #334155;
     text-decoration: none;
     color: inherit;
-    transition: transform 0.15s ease;
+    transition: transform 0.15s ease, border-color 0.15s ease;
   }
 
   .nav-card:hover {
@@ -426,19 +718,7 @@ ${exerciseInputs}
     background: #1e293b;
     padding: 1.5rem;
     border-radius: 10px;
-  }
-
-  ul {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-  }
-
-  li {
-    display: flex;
-    justify-content: space-between;
-    padding: 0.75rem 0;
-    border-bottom: 1px solid #334155;
+    border: 1px solid #334155;
   }
 
   .pts {
@@ -453,5 +733,300 @@ ${exerciseInputs}
     padding: 0.75rem;
     border-radius: 6px;
     margin-bottom: 1.5rem;
+  }
+
+  .edit-btn {
+    padding: 0.625rem 1rem;
+    background: #3b82f6;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .edit-btn:hover {
+    background: #2563eb;
+  }
+
+  .metadata-editor-card {
+    background: #1e293b;
+    border: 1px solid #3b82f6;
+    padding: 1.5rem;
+    border-radius: 10px;
+    margin-bottom: 2rem;
+  }
+
+  .metadata-editor-card h3 {
+    margin-top: 0;
+    color: #38bdf8;
+  }
+
+  .form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .form-group.full-width {
+    grid-column: span 2;
+  }
+
+  .form-group label {
+    font-size: 0.8125rem;
+    color: #94a3b8;
+  }
+
+  .form-group input,
+  .form-group textarea {
+    background: #0f172a;
+    border: 1px solid #334155;
+    color: #f8fafc;
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    font-family: inherit;
+  }
+
+  .editor-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    margin-top: 1rem;
+  }
+
+  .cancel-btn {
+    padding: 0.5rem 1rem;
+    background: #475569;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+
+  .save-btn {
+    padding: 0.5rem 1.25rem;
+    background: #10b981;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+  }
+
+  .add-library-btn {
+    padding: 0.5rem 1rem;
+    background: #0284c7;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .empty-notice {
+    color: #94a3b8;
+    font-style: italic;
+    margin: 0;
+  }
+
+  .exercise-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .exercise-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #0f172a;
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    border: 1px solid #334155;
+  }
+
+  .ex-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .ex-num {
+    font-weight: 600;
+    color: #cbd5e1;
+  }
+
+  .ex-title {
+    color: #f8fafc;
+  }
+
+  .topic-tag {
+    font-size: 0.75rem;
+    background: #0284c7;
+    color: white;
+    padding: 0.125rem 0.5rem;
+    border-radius: 4px;
+  }
+
+  .variant-tag {
+    font-size: 0.75rem;
+    background: #8b5cf6;
+    color: white;
+    padding: 0.125rem 0.5rem;
+    border-radius: 4px;
+  }
+
+  .ver-tag {
+    font-size: 0.75rem;
+    background: #334155;
+    color: #94a3b8;
+    padding: 0.125rem 0.375rem;
+    border-radius: 4px;
+  }
+
+  .ex-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .icon-btn {
+    background: #334155;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+
+  .icon-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+
+  .icon-btn.delete {
+    background: #ef4444;
+  }
+
+  .modal-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.75);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+
+  .modal-content {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    width: 90%;
+    max-width: 600px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid #334155;
+  }
+
+  .modal-header h3 {
+    margin: 0;
+    color: #38bdf8;
+  }
+
+  .close-btn {
+    background: none;
+    border: none;
+    color: #94a3b8;
+    font-size: 1.25rem;
+    cursor: pointer;
+  }
+
+  .modal-body {
+    padding: 1.5rem;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .search-input {
+    background: #0f172a;
+    border: 1px solid #334155;
+    color: white;
+    padding: 0.625rem 1rem;
+    border-radius: 6px;
+    width: 100%;
+  }
+
+  .library-picker-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    max-height: 350px;
+    overflow-y: auto;
+  }
+
+  .picker-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    background: #0f172a;
+    padding: 0.75rem;
+    border-radius: 6px;
+    border: 1px solid #334155;
+    cursor: pointer;
+  }
+
+  .picker-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .meta-row {
+    display: flex;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+  }
+
+  .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    padding: 1rem 1.5rem;
+    border-top: 1px solid #334155;
   }
 </style>

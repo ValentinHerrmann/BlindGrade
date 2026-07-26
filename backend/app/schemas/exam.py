@@ -17,6 +17,8 @@ class ExerciseCreate(BaseModel):
     question_type: Literal["free_text", "mc", "sc", "tf"] = "free_text"
     correct_answers: dict | None = None
     penalty: float = 0.0
+    exercise_group_id: uuid.UUID | None = None
+    variant_key: str | None = None
 
 
 class ExerciseUpdate(BaseModel):
@@ -24,6 +26,8 @@ class ExerciseUpdate(BaseModel):
     topic_tag: str | None = None
     latex_body: str | None = None
     max_points: float | None = None
+    exercise_group_id: uuid.UUID | None = None
+    variant_key: str | None = None
 
 
 class ExerciseResponse(BaseModel):
@@ -34,6 +38,9 @@ class ExerciseResponse(BaseModel):
     latex_body: str | None = None
     max_points: float = 0.0
     version: int = 1
+    exercise_group_id: uuid.UUID | None = None
+    variant_key: str | None = None
+    is_current: bool = True
     order_index: int = 1
     question_type: str = "free_text"
     correct_answers: dict | None = None

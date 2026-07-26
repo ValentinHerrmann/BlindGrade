@@ -14,6 +14,8 @@ from app.models.exercise import Exercise
 from app.models.teacher import Teacher
 from app.schemas.exam import ExerciseCreate, ExerciseResponse, ExerciseUpdate
 
+from app.models.exercise_group import ExerciseGroup
+
 router = APIRouter(prefix="/exercises", tags=["exercises"])
 
 
@@ -36,10 +38,31 @@ def parse_exercise_score(latex_content: str) -> float:
     return full * 1.0 + half * 0.5 + quart * 0.25
 
 
+def _to_res(ex: Exercise) -> ExerciseResponse:
+    return ExerciseResponse(
+        id=ex.id,
+        teacher_id=ex.teacher_id,
+        name=ex.name,
+        topic_tag=ex.topic_tag,
+        latex_body=ex.latex_body,
+        max_points=ex.max_points,
+        version=ex.version,
+        exercise_group_id=ex.exercise_group_id,
+        variant_key=ex.variant_key,
+        is_current=ex.is_current,
+        order_index=ex.order_index,
+        question_type=ex.question_type,
+        correct_answers=ex.correct_answers,
+        penalty=ex.penalty,
+    )
+
+
 @router.get("", response_model=list[ExerciseResponse])
 async def list_exercises(
     topic_tag: str | None = None,
     search: str | None = None,
+    group_id: uuid.UUID | None = None,
+    current_only: bool = True,
     teacher: Teacher = Depends(get_current_teacher),
     db: AsyncSession = Depends(get_db),
 ) -> list[ExerciseResponse]:
@@ -47,6 +70,12 @@ async def list_exercises(
     query = select(Exercise).where(
         or_(Exercise.teacher_id == teacher.id, Exercise.teacher_id.is_(None))
     )
+
+    if current_only:
+        query = query.where(Exercise.is_current.is_(True))
+
+    if group_id:
+        query = query.where(Exercise.exercise_group_id == group_id)
 
     if topic_tag:
         query = query.where(Exercise.topic_tag == topic_tag)
@@ -58,29 +87,15 @@ async def list_exercises(
                 Exercise.name.ilike(search_pattern),
                 Exercise.latex_body.ilike(search_pattern),
                 Exercise.topic_tag.ilike(search_pattern),
+                Exercise.variant_key.ilike(search_pattern),
             )
         )
 
-    query = query.order_by(Exercise.name.asc())
+    query = query.order_by(Exercise.name.asc(), Exercise.version.desc())
     result = await db.execute(query)
     exercises = result.scalars().all()
 
-    return [
-        ExerciseResponse(
-            id=ex.id,
-            teacher_id=ex.teacher_id,
-            name=ex.name,
-            topic_tag=ex.topic_tag,
-            latex_body=ex.latex_body,
-            max_points=ex.max_points,
-            version=ex.version,
-            order_index=ex.order_index,
-            question_type=ex.question_type,
-            correct_answers=ex.correct_answers,
-            penalty=ex.penalty,
-        )
-        for ex in exercises
-    ]
+    return [_to_res(ex) for ex in exercises]
 
 
 @router.post("", response_model=ExerciseResponse, status_code=status.HTTP_201_CREATED)
@@ -92,6 +107,17 @@ async def create_exercise(
     """Create a new exercise in the teacher's library."""
     computed_score = parse_exercise_score(body.latex_body) if body.latex_body else body.max_points
 
+    group_id = body.exercise_group_id
+    if not group_id:
+        group = ExerciseGroup(
+            teacher_id=teacher.id,
+            name=body.name or "Untitled Group",
+            topic_tag=body.topic_tag,
+        )
+        db.add(group)
+        await db.flush()
+        group_id = group.id
+
     ex = Exercise(
         teacher_id=teacher.id,
         name=body.name,
@@ -99,6 +125,9 @@ async def create_exercise(
         latex_body=body.latex_body,
         max_points=computed_score,
         version=1,
+        exercise_group_id=group_id,
+        variant_key=body.variant_key,
+        is_current=True,
         question_type=body.question_type,
         correct_answers=body.correct_answers,
         penalty=body.penalty,
@@ -106,19 +135,7 @@ async def create_exercise(
     db.add(ex)
     await db.flush()
 
-    return ExerciseResponse(
-        id=ex.id,
-        teacher_id=ex.teacher_id,
-        name=ex.name,
-        topic_tag=ex.topic_tag,
-        latex_body=ex.latex_body,
-        max_points=ex.max_points,
-        version=ex.version,
-        order_index=ex.order_index,
-        question_type=ex.question_type,
-        correct_answers=ex.correct_answers,
-        penalty=ex.penalty,
-    )
+    return _to_res(ex)
 
 
 @router.get("/{exercise_id}", response_model=ExerciseResponse)
@@ -133,19 +150,7 @@ async def get_exercise(
     if not ex:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exercise not found")
 
-    return ExerciseResponse(
-        id=ex.id,
-        teacher_id=ex.teacher_id,
-        name=ex.name,
-        topic_tag=ex.topic_tag,
-        latex_body=ex.latex_body,
-        max_points=ex.max_points,
-        version=ex.version,
-        order_index=ex.order_index,
-        question_type=ex.question_type,
-        correct_answers=ex.correct_answers,
-        penalty=ex.penalty,
-    )
+    return _to_res(ex)
 
 
 @router.patch("/{exercise_id}", response_model=ExerciseResponse)
@@ -155,7 +160,7 @@ async def update_exercise(
     teacher: Teacher = Depends(get_current_teacher),
     db: AsyncSession = Depends(get_db),
 ) -> ExerciseResponse:
-    """Update a library exercise. Increments version counter."""
+    """Update a library exercise in place."""
     result = await db.execute(select(Exercise).where(Exercise.id == exercise_id))
     ex = result.scalar_one_or_none()
     if not ex:
@@ -170,23 +175,99 @@ async def update_exercise(
         ex.max_points = parse_exercise_score(body.latex_body)
     elif body.max_points is not None:
         ex.max_points = body.max_points
+    if body.exercise_group_id is not None:
+        ex.exercise_group_id = body.exercise_group_id
+    if body.variant_key is not None:
+        ex.variant_key = body.variant_key
 
-    ex.version += 1
+    await db.flush()
+    return _to_res(ex)
+
+
+@router.post("/{exercise_id}/new-version", response_model=ExerciseResponse, status_code=status.HTTP_201_CREATED)
+async def create_new_version(
+    exercise_id: uuid.UUID,
+    body: ExerciseUpdate,
+    teacher: Teacher = Depends(get_current_teacher),
+    db: AsyncSession = Depends(get_db),
+) -> ExerciseResponse:
+    """Create a new corrected version of an existing exercise (archives previous version)."""
+    result = await db.execute(select(Exercise).where(Exercise.id == exercise_id))
+    old_ex = result.scalar_one_or_none()
+    if not old_ex:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exercise not found")
+
+    # Mark old version as not current
+    old_ex.is_current = False
+
+    new_latex = body.latex_body if body.latex_body is not None else old_ex.latex_body
+    computed_score = parse_exercise_score(new_latex) if new_latex else old_ex.max_points
+
+    new_ex = Exercise(
+        teacher_id=teacher.id,
+        name=body.name if body.name is not None else old_ex.name,
+        topic_tag=body.topic_tag if body.topic_tag is not None else old_ex.topic_tag,
+        latex_body=new_latex,
+        max_points=computed_score,
+        version=old_ex.version + 1,
+        exercise_group_id=body.exercise_group_id or old_ex.exercise_group_id,
+        variant_key=body.variant_key or old_ex.variant_key,
+        is_current=True,
+        question_type=old_ex.question_type,
+        correct_answers=old_ex.correct_answers,
+        penalty=old_ex.penalty,
+    )
+    db.add(new_ex)
     await db.flush()
 
-    return ExerciseResponse(
-        id=ex.id,
-        teacher_id=ex.teacher_id,
-        name=ex.name,
-        topic_tag=ex.topic_tag,
-        latex_body=ex.latex_body,
-        max_points=ex.max_points,
-        version=ex.version,
-        order_index=ex.order_index,
-        question_type=ex.question_type,
-        correct_answers=ex.correct_answers,
-        penalty=ex.penalty,
+    return _to_res(new_ex)
+
+
+@router.post("/{exercise_id}/new-variant", response_model=ExerciseResponse, status_code=status.HTTP_201_CREATED)
+async def create_new_variant(
+    exercise_id: uuid.UUID,
+    body: ExerciseCreate,
+    teacher: Teacher = Depends(get_current_teacher),
+    db: AsyncSession = Depends(get_db),
+) -> ExerciseResponse:
+    """Create a new parallel variant (e.g. Möbel/Fahrzeug/Wildtier) under the same group."""
+    result = await db.execute(select(Exercise).where(Exercise.id == exercise_id))
+    base_ex = result.scalar_one_or_none()
+    if not base_ex:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exercise not found")
+
+    group_id = base_ex.exercise_group_id
+    if not group_id:
+        group = ExerciseGroup(
+            teacher_id=teacher.id,
+            name=base_ex.name or "Untitled Group",
+            topic_tag=base_ex.topic_tag,
+        )
+        db.add(group)
+        await db.flush()
+        group_id = group.id
+        base_ex.exercise_group_id = group_id
+
+    computed_score = parse_exercise_score(body.latex_body) if body.latex_body else body.max_points
+
+    variant_ex = Exercise(
+        teacher_id=teacher.id,
+        name=body.name or base_ex.name,
+        topic_tag=body.topic_tag or base_ex.topic_tag,
+        latex_body=body.latex_body,
+        max_points=computed_score,
+        version=1,
+        exercise_group_id=group_id,
+        variant_key=body.variant_key,
+        is_current=True,
+        question_type=body.question_type,
+        correct_answers=body.correct_answers,
+        penalty=body.penalty,
     )
+    db.add(variant_ex)
+    await db.flush()
+
+    return _to_res(variant_ex)
 
 
 @router.delete("/{exercise_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -3,6 +3,7 @@ from app.models.audit_log import AuditLog
 from app.models.exam import Exam
 from app.models.exam_exercise import ExamExercise
 from app.models.exercise import Exercise
+from app.models.exercise_group import ExerciseGroup
 from app.models.invite import InviteToken
 from app.models.refresh_token import RefreshToken
 from app.models.scan_submission import ScanSubmission
@@ -15,6 +16,7 @@ __all__ = [
     "RefreshToken",
     "Exam",
     "Exercise",
+    "ExerciseGroup",
     "ExamExercise",
     "StudentIdentity",
     "ScanSubmission",

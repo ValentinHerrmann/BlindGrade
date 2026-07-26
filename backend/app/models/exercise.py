@@ -25,6 +25,11 @@ class Exercise(Base):
     name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     latex_body: Mapped[str | None] = mapped_column(Text, nullable=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    exercise_group_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("exercise_groups.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    variant_key: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    is_current: Mapped[bool] = mapped_column(nullable=False, default=True)
     question_type: Mapped[str] = mapped_column(
         Enum("free_text", "mc", "sc", "tf", name="question_type"),
         nullable=False,

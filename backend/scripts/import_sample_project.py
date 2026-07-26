@@ -25,6 +25,7 @@ from app.config import settings
 from app.models.exam import Exam
 from app.models.exam_exercise import ExamExercise
 from app.models.exercise import Exercise
+from app.models.exercise_group import ExerciseGroup
 from app.models.teacher import Teacher
 
 
@@ -140,6 +141,31 @@ async def import_sample_project(project_dir: Path, teacher_email: str) -> None:
                         score = parse_exercise_score(ex_content)
                         topic = rel_input.split("/")[0] if "/" in rel_input else None
 
+                        group_id = None
+                        variant_key = None
+                        if "_" in ex_name:
+                            parts = ex_name.split("_", 1)
+                            group_name = f"{topic or ''} {parts[0]}".strip()
+                            variant_key = parts[1]
+
+                            # Check/create ExerciseGroup
+                            group_res = await session.execute(
+                                select(ExerciseGroup).where(
+                                    ExerciseGroup.teacher_id == teacher.id,
+                                    ExerciseGroup.name == group_name,
+                                )
+                            )
+                            group = group_res.scalar_one_or_none()
+                            if not group:
+                                group = ExerciseGroup(
+                                    teacher_id=teacher.id,
+                                    name=group_name,
+                                    topic_tag=topic,
+                                )
+                                session.add(group)
+                                await session.flush()
+                            group_id = group.id
+
                         db_ex = Exercise(
                             teacher_id=teacher.id,
                             name=ex_name,
@@ -147,6 +173,9 @@ async def import_sample_project(project_dir: Path, teacher_email: str) -> None:
                             latex_body=ex_content,
                             max_points=score,
                             version=1,
+                            exercise_group_id=group_id,
+                            variant_key=variant_key,
+                            is_current=True,
                             question_type="free_text",
                         )
                         session.add(db_ex)

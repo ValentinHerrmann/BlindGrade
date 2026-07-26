@@ -191,21 +191,91 @@ ${editorLatexBody}
     }
   }
 
-  async function handleDeleteExercise(id: string, name: string) {
-    if (!confirm(`Are you sure you want to delete "${name}" from your library?`)) return;
+  // Variant modal state
+  let isVariantModalOpen = false;
+  let variantBaseEx: ExerciseRecord | null = null;
+  let variantKey = 'Moebel';
+  let variantName = '';
+  let variantTopicTag = '_Vererbung';
+  let variantLatexBody = '';
+
+  async function handleCreateNewVersion(ex: ExerciseRecord) {
+    if (!confirm(`Create new corrected version (v${(ex.version || 1) + 1}) of "${ex.name}"? Previous version will be archived for statistics.`)) return;
 
     try {
-      await db.exercises.delete(id);
       if ($sessionStore.mode === 'hybrid') {
-        try {
-          await api.delete(`/exercises/${id}`);
-        } catch (apiErr) {
-          console.warn('Failed to delete on server:', apiErr);
-        }
+        await api.post(`/exercises/${ex.id}/new-version`, {
+          name: ex.name,
+          topic_tag: ex.topicTag,
+          latex_body: ex.latexBody,
+        });
+      } else {
+        const newRecord: ExerciseRecord = {
+          ...ex,
+          id: crypto.randomUUID(),
+          version: (ex.version || 1) + 1,
+          isCurrent: true,
+          updatedAt: new Date().toISOString(),
+        };
+        await db.exercises.put({ ...ex, isCurrent: false });
+        await db.exercises.put(newRecord);
       }
+
       await loadExercises();
+      alert(`Created new version v${(ex.version || 1) + 1}.`);
     } catch (err: any) {
-      alert(`Failed to delete exercise: ${err.message}`);
+      alert(`Failed to create new version: ${err.message}`);
+    }
+  }
+
+  function openVariantModal(ex: ExerciseRecord) {
+    variantBaseEx = ex;
+    variantName = `${ex.name || 'Exercise'} (Variant)`;
+    variantKey = 'Moebel';
+    variantTopicTag = ex.topicTag || '_General';
+    variantLatexBody = ex.latexBody || '';
+    isVariantModalOpen = true;
+  }
+
+  async function handleSaveVariant() {
+    if (!variantBaseEx) return;
+    if (!variantKey.trim()) {
+      alert('Variant key (e.g. Moebel, Fahrzeug, Wildtier) is required.');
+      return;
+    }
+
+    try {
+      if ($sessionStore.mode === 'hybrid') {
+        await api.post(`/exercises/${variantBaseEx.id}/new-variant`, {
+          name: variantName,
+          topic_tag: variantTopicTag,
+          latex_body: variantLatexBody,
+          variant_key: variantKey,
+        });
+      } else {
+        const variantRecord: ExerciseRecord = {
+          id: crypto.randomUUID(),
+          teacherId: $sessionStore.email || 'local-teacher',
+          name: variantName,
+          topicTag: variantTopicTag,
+          latexBody: variantLatexBody,
+          maxPoints: parseExerciseScore(variantLatexBody),
+          version: 1,
+          exerciseGroupId: variantBaseEx.exerciseGroupId || crypto.randomUUID(),
+          variantKey: variantKey,
+          isCurrent: true,
+          questionType: 'free_text',
+          penalty: 0,
+          updatedAt: new Date().toISOString(),
+        };
+        await db.exercises.put(variantRecord);
+      }
+
+      isVariantModalOpen = false;
+      await loadExercises();
+      alert(`New variant "${variantKey}" created.`);
+    } catch (err: any) {
+      alert(`Failed to create variant: ${err.message}`);
     }
   }
 </script>
@@ -271,6 +341,9 @@ ${editorLatexBody}
               {#if ex.topicTag}
                 <span class="topic-badge">{ex.topicTag}</span>
               {/if}
+              {#if ex.variantKey}
+                <span class="variant-badge">Variant: {ex.variantKey}</span>
+              {/if}
               <span class="score-badge">{score} Pkt</span>
               <span class="version-badge">v{ex.version || 1}</span>
             </div>
@@ -282,18 +355,75 @@ ${editorLatexBody}
 
           <div class="card-actions">
             <button class="action-btn edit-btn" on:click={() => openEditModal(ex)}>Edit</button>
-            <button
-              class="action-btn delete-btn"
-              on:click={() => handleDeleteExercise(ex.id, ex.name || 'this exercise')}
-            >
-              Delete
-            </button>
+            <button class="action-btn version-btn" on:click={() => handleCreateNewVersion(ex)}>+ Version</button>
+            <button class="action-btn variant-btn" on:click={() => openVariantModal(ex)}>+ Variant</button>
           </div>
         </div>
       {/each}
     </div>
   {/if}
 </div>
+
+{#if isVariantModalOpen}
+  <div
+    class="modal-backdrop"
+    role="button"
+    tabindex="-1"
+    on:click|self={() => (isVariantModalOpen = false)}
+    on:keydown|self={(e) => e.key === 'Escape' && (isVariantModalOpen = false)}
+  >
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Create Parallel Exercise Variant</h3>
+        <button class="close-btn" on:click={() => (isVariantModalOpen = false)}>✕</button>
+      </div>
+
+      <div class="modal-body">
+        <p class="desc-text">
+          Variants share the same exercise type structure but use a different theme (e.g. Möbel, Fahrzeug, Wildtier). This allows generating parallel exam groups while maintaining statistical comparability.
+        </p>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="variantName">Variant Name</label>
+            <input id="variantName" type="text" bind:value={variantName} required />
+          </div>
+
+          <div class="form-group">
+            <label for="variantKey">Variant Theme / Key</label>
+            <input
+              id="variantKey"
+              type="text"
+              bind:value={variantKey}
+              placeholder="e.g. Moebel, Fahrzeug, Wildtier"
+              required
+            />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="variantTopic">Topic Tag</label>
+          <input id="variantTopic" type="text" bind:value={variantTopicTag} required />
+        </div>
+
+        <div class="form-group">
+          <label for="variantBody">LaTeX Body (\\begin&#123;Aufgabe&#125;...)</label>
+          <textarea
+            id="variantBody"
+            rows="8"
+            class="code-editor"
+            bind:value={variantLatexBody}
+          ></textarea>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="cancel-btn" on:click={() => (isVariantModalOpen = false)}>Cancel</button>
+        <button class="save-btn" on:click={handleSaveVariant}>Save Variant</button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 {#if isEditorOpen}
   <div
@@ -700,6 +830,30 @@ ${editorLatexBody}
     text-align: center;
     padding: 3rem;
     color: #94a3b8;
+  }
+
+  .variant-badge {
+    background: #8b5cf6;
+    color: white;
+    font-size: 0.75rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+  }
+
+  .version-btn {
+    background: #334155;
+    color: #38bdf8;
+  }
+
+  .variant-btn {
+    background: #4c1d95;
+    color: #ddd6fe;
+  }
+
+  .desc-text {
+    font-size: 0.875rem;
+    color: #94a3b8;
+    margin: 0 0 1rem 0;
   }
 
   .error-banner {

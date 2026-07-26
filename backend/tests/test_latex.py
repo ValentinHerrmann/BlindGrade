@@ -60,4 +60,5 @@ async def test_tectonic_subprocess_args() -> None:
         await compile_latex("\\documentclass{article}", preview=True)
 
     assert any("tectonic" in args for args in captured_args)
-    assert any("--reruns" in args and "0" in args for args in captured_args)
+    assert any("-k" in args for args in captured_args)
+    assert len(captured_args) == 2
