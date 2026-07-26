@@ -1,34 +1,40 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
-  import { deriveKey, generateSalt } from '$lib/crypto/keyDerivation';
-  import { deriveSessionKey, generateSessionNonce } from '$lib/crypto/sessionKey';
-  import { sessionStore } from '$lib/stores/session';
-  import { api } from '$lib/api/client';
+  import { goto } from "$app/navigation";
+  import { deriveKey, generateSalt } from "$lib/crypto/keyDerivation";
+  import {
+    deriveSessionKey,
+    generateSessionNonce,
+  } from "$lib/crypto/sessionKey";
+  import { sessionStore } from "$lib/stores/session";
+  import { api } from "$lib/api/client";
 
-  let mode: 'local' | 'hybrid' = 'local';
-  let password = '';
-  let email = '';
-  let errorMsg = '';
+  let mode: "local" | "hybrid" = "local";
+  let password = "";
+  let email = "";
+  let errorMsg = "";
   let isLoading = false;
 
   async function handleUnlock() {
-    errorMsg = '';
+    errorMsg = "";
     if (!password) {
-      errorMsg = 'Please enter a master password.';
+      errorMsg = "Please enter a master password.";
       return;
     }
 
     isLoading = true;
     try {
-      if (mode === 'hybrid') {
+      if (mode === "hybrid") {
         const normalizedEmail = email.trim().toLowerCase();
         if (!normalizedEmail) {
-          errorMsg = 'Please enter your email.';
+          errorMsg = "Please enter your email.";
           isLoading = false;
           return;
         }
         // Authenticate with server to get httpOnly cookies
-        const user = await api.post<{ email: string; role: 'teacher' | 'admin' }>('/auth/login', {
+        const user = await api.post<{
+          email: string;
+          role: "teacher" | "admin";
+        }>("/auth/login", {
           email: normalizedEmail,
           password,
         });
@@ -47,13 +53,14 @@
         masterKey,
         sessionKey,
         sessionNonce,
-        email: mode === 'hybrid' ? email : undefined,
+        email: mode === "hybrid" ? email : undefined,
       });
 
       // Redirect to main page without losing in-memory session keys
-      await goto('/');
+      await goto("/");
     } catch (err: any) {
-      errorMsg = err.message || 'Unlock failed. Check your password or credentials.';
+      errorMsg =
+        err.message || "Unlock failed. Check your password or credentials.";
     } finally {
       isLoading = false;
     }
@@ -67,14 +74,20 @@
 
     <div class="mode-tabs">
       <button
-        class:active={mode === 'local'}
-        on:click={() => { mode = 'local'; errorMsg = ''; }}
+        class:active={mode === "local"}
+        on:click={() => {
+          mode = "local";
+          errorMsg = "";
+        }}
       >
         Local Mode
       </button>
       <button
-        class:active={mode === 'hybrid'}
-        on:click={() => { mode = 'hybrid'; errorMsg = ''; }}
+        class:active={mode === "hybrid"}
+        on:click={() => {
+          mode = "hybrid";
+          errorMsg = "";
+        }}
       >
         Hybrid Server Mode
       </button>
@@ -85,7 +98,7 @@
     {/if}
 
     <form on:submit|preventDefault={handleUnlock}>
-      {#if mode === 'hybrid'}
+      {#if mode === "hybrid"}
         <div class="form-group">
           <label for="email">Email</label>
           <input
@@ -108,14 +121,14 @@
           required
         />
         <small class="hint">
-          {mode === 'local'
-            ? 'Used to derive local encryption key. Never leaves your browser.'
-            : 'Your teacher password used for server authentication & key derivation.'}
+          {mode === "local"
+            ? "Used to derive local encryption key. Never leaves your browser."
+            : "Your teacher password used for server authentication & key derivation."}
         </small>
       </div>
 
       <button type="submit" class="submit-btn" disabled={isLoading}>
-        {isLoading ? 'Deriving Keys...' : 'Unlock Project'}
+        {isLoading ? "Deriving Keys..." : "Unlock Project"}
       </button>
     </form>
   </div>
@@ -129,7 +142,13 @@
     min-height: 100vh;
     background-color: #0f172a;
     color: #f8fafc;
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family:
+      system-ui,
+      -apple-system,
+      BlinkMacSystemFont,
+      "Segoe UI",
+      Roboto,
+      sans-serif;
   }
 
   .unlock-card {

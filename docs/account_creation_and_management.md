@@ -44,10 +44,10 @@ To log in as a teacher:
 
 ## Quick Reference Commands
 
-| Action | Command |
-| :--- | :--- |
-| **Create User** | `python -m app.cli create-user --email user@school.com --role teacher` |
-| **Create Admin** | `python -m app.cli create-user --email admin@school.com --role admin --allow-admin` |
-| **Reset Password** | `python -m app.cli set-password --email user@school.com` |
-| **Generate One-Time Invite** | `python -m app.cli create-invite --expires-days 7` |
+| Action                       | Command                                                                             |
+| :--------------------------- | :---------------------------------------------------------------------------------- |
+| **Create User**              | `python -m app.cli create-user --email user@school.com --role teacher`              |
+| **Create Admin**             | `python -m app.cli create-user --email admin@school.com --role admin --allow-admin` |
+| **Reset Password**           | `python -m app.cli set-password --email user@school.com`                            |
+| **Generate One-Time Invite** | `python -m app.cli create-invite --expires-days 7`                                  |
 
