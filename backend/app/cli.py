@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 
 import click
 from sqlalchemy import func, select, update
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from app.config import settings  # noqa: F401 — validates config at import
 
@@ -26,7 +26,7 @@ def cli() -> None:
     """BlindGrade management commands."""
 
 
-def _raise_schema_hint(exc: OperationalError) -> None:
+def _raise_schema_hint(exc: Exception) -> None:
     """Convert DB schema errors into actionable CLI guidance."""
     msg = str(exc).lower()
     if "no such table" in msg or "undefined table" in msg:
@@ -74,7 +74,7 @@ def create_invite(expires_days: int, created_by: str | None) -> None:
                 )
                 db.add(record)
                 await db.commit()
-            except OperationalError as exc:
+            except (OperationalError, ProgrammingError) as exc:
                 _raise_schema_hint(exc)
 
     asyncio.run(_insert())
@@ -140,7 +140,7 @@ def create_user(email: str, role: str, allow_admin: bool, password: str) -> None
                 await db.commit()
                 await db.refresh(teacher)
                 return teacher
-            except OperationalError as exc:
+            except (OperationalError, ProgrammingError) as exc:
                 _raise_schema_hint(exc)
 
     created = asyncio.run(_insert())
@@ -180,7 +180,7 @@ def set_password(email: str, password: str) -> None:
 
                 teacher.password_hash = hash_password(password)
                 await db.commit()
-            except OperationalError as exc:
+            except (OperationalError, ProgrammingError) as exc:
                 _raise_schema_hint(exc)
 
     asyncio.run(_update())

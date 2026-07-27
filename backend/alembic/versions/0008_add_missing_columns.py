@@ -17,9 +17,9 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
-async def upgrade() -> None:
+def upgrade() -> None:
     conn = op.get_bind()
-    await conn.execute(
+    conn.execute(
         text("""
         DO $$
         BEGIN
@@ -195,5 +195,5 @@ async def upgrade() -> None:
     )
 
 
-async def downgrade() -> None:
+def downgrade() -> None:
     pass
