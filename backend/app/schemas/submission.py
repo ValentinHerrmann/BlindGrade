@@ -8,9 +8,10 @@ from pydantic import BaseModel, Field
 
 
 class SubmissionCreate(BaseModel):
+    id: uuid.UUID | None = None
     pseudonym_hmac: str = Field(min_length=64, max_length=64)
     scan_ciphertext_b64: str | None = None
-    scan_iv_b64: str
+    scan_iv_b64: str | None = None
     annotation_ciphertext_b64: str | None = None
     annotation_iv_b64: str | None = None
     total_score: float | None = None
@@ -26,7 +27,7 @@ class SubmissionResponse(BaseModel):
     pseudonym_hmac: str
     total_score: float | None
     scan_ciphertext_b64: str | None = None
-    scan_iv_b64: str
+    scan_iv_b64: str | None = None
     annotation_ciphertext_b64: str | None = None
     annotation_iv_b64: str | None = None
     created_at: datetime

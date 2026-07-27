@@ -141,22 +141,25 @@ async def create_exercise(
         await db.flush()
         group_id = group.id
 
-    ex = Exercise(
-        teacher_id=teacher.id,
-        name=body.name,
-        topic_tag=body.topic_tag,
-        grade=body.grade,
-        subject=body.subject,
-        latex_body=body.latex_body,
-        max_points=computed_score,
-        version=1,
-        exercise_group_id=group_id,
-        variant_key=body.variant_key,
-        is_current=True,
-        question_type=body.question_type,
-        correct_answers=body.correct_answers,
-        penalty=body.penalty,
-    )
+    kwargs = {
+        "teacher_id": teacher.id,
+        "name": body.name,
+        "topic_tag": body.topic_tag,
+        "grade": body.grade,
+        "subject": body.subject,
+        "latex_body": body.latex_body,
+        "max_points": computed_score,
+        "version": 1,
+        "exercise_group_id": group_id,
+        "variant_key": body.variant_key,
+        "is_current": True,
+        "question_type": body.question_type,
+        "correct_answers": body.correct_answers,
+        "penalty": body.penalty,
+    }
+    if body.id:
+        kwargs["id"] = body.id
+    ex = Exercise(**kwargs)
     db.add(ex)
     await db.flush()
 

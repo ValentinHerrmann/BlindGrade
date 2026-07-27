@@ -65,7 +65,7 @@
 <div class="unlock-container">
   <div class="unlock-card">
     <h1>BlindGrade</h1>
-    <p class="subtitle">Privacy-First Anonymous Exam Grading</p>
+    <p class="subtitle">Privacy-First Anonymous Exam Management</p>
 
     {#if errorMsg}
       <div class="error-banner">{errorMsg}</div>

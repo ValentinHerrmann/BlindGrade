@@ -129,19 +129,22 @@ async def create_exam(
     db: AsyncSession = Depends(get_db),
 ) -> ExamResponse:
     """Create a new exam and live-link exercises from library or inline creation."""
-    exam = Exam(
-        teacher_id=teacher.id,
-        title=body.title,
-        latex_template=body.latex_template,
-        retention_until=body.retention_until,
-        testart=body.testart,
-        klasse=body.klasse,
-        datum=body.datum,
-        nr=body.nr,
-        fach=body.fach,
-        lehrernachname=body.lehrernachname,
-        info_text=body.info_text,
-    )
+    kwargs = {
+        "teacher_id": teacher.id,
+        "title": body.title,
+        "latex_template": body.latex_template,
+        "retention_until": body.retention_until,
+        "testart": body.testart,
+        "klasse": body.klasse,
+        "datum": body.datum,
+        "nr": body.nr,
+        "fach": body.fach,
+        "lehrernachname": body.lehrernachname,
+        "info_text": body.info_text,
+    }
+    if body.id:
+        kwargs["id"] = body.id
+    exam = Exam(**kwargs)
     db.add(exam)
     await db.flush()
 

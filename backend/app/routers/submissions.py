@@ -36,7 +36,7 @@ async def list_submissions(
             exam_id=s.exam_id,
             pseudonym_hmac=s.pseudonym_hmac,
             total_score=s.total_score,
-            scan_iv_b64=base64.b64encode(s.scan_iv).decode(),
+            scan_iv_b64=base64.b64encode(s.scan_iv).decode() if s.scan_iv else None,
             created_at=s.created_at,
         )
         for s in subs
@@ -51,19 +51,22 @@ async def upload_submission(
 ) -> SubmissionResponse:
     """Upload encrypted scan submission."""
     scan_bytes = base64.b64decode(body.scan_ciphertext_b64) if body.scan_ciphertext_b64 else None
-    scan_iv = base64.b64decode(body.scan_iv_b64)
+    scan_iv = base64.b64decode(body.scan_iv_b64) if body.scan_iv_b64 else b""
     ann_bytes = base64.b64decode(body.annotation_ciphertext_b64) if body.annotation_ciphertext_b64 else None
     ann_iv = base64.b64decode(body.annotation_iv_b64) if body.annotation_iv_b64 else None
 
-    sub = ScanSubmission(
-        exam_id=exam.id,
-        pseudonym_hmac=body.pseudonym_hmac,
-        total_score=body.total_score,
-        scan_ciphertext=scan_bytes,
-        scan_iv=scan_iv,
-        annotation_ciphertext=ann_bytes,
-        annotation_iv=ann_iv,
-    )
+    kwargs = {
+        "exam_id": exam.id,
+        "pseudonym_hmac": body.pseudonym_hmac,
+        "total_score": body.total_score,
+        "scan_ciphertext": scan_bytes,
+        "scan_iv": scan_iv,
+        "annotation_ciphertext": ann_bytes,
+        "annotation_iv": ann_iv,
+    }
+    if body.id:
+        kwargs["id"] = body.id
+    sub = ScanSubmission(**kwargs)
     db.add(sub)
     await db.flush()
 

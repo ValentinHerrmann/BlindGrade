@@ -143,17 +143,16 @@
       // 1. Post exam
       await api.post("/exams", {
         id: exam.id,
-        title: exam.title,
+        title: exam.title || "Unbenannte Prüfung",
         testart: exam.testart,
         klasse: exam.klasse,
         datum: exam.datum,
         nr: exam.nr,
         fach: exam.fach,
         lehrernachname: exam.lehrernachname,
-        infoText: exam.infoText,
-        latexPreamble: exam.latexPreamble,
-        latexTemplate: exam.latexTemplate,
-        retentionUntil:
+        info_text: exam.infoText,
+        latex_template: exam.latexTemplate,
+        retention_until:
           exam.retentionUntil ||
           new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10),
       });
@@ -163,13 +162,13 @@
         try {
           await api.post("/exercises", {
             id: ex.id,
-            title: ex.title || ex.name || "Exercise",
-            latexBody: ex.latexBody || "",
-            maxPoints: ex.maxPoints,
-            topicTag: ex.topicTag,
-            questionType: ex.questionType || "free_text",
+            name: ex.title || ex.name || "Exercise",
+            latex_body: ex.latexBody || "",
+            max_points: ex.maxPoints,
+            topic_tag: ex.topicTag,
+            question_type: ex.questionType || "free_text",
             options: ex.options,
-            correctAnswers: ex.correctAnswers,
+            correct_answers: ex.correctAnswers,
             penalty: ex.penalty || 0,
           });
         } catch {}

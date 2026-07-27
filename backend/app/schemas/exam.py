@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 
 class ExerciseCreate(BaseModel):
+    id: uuid.UUID | None = None
     name: str = "Exercise"
     topic_tag: str | None = None
     grade: str | None = None
@@ -54,6 +55,7 @@ class ExerciseResponse(BaseModel):
 
 
 class ExamCreate(BaseModel):
+    id: uuid.UUID | None = None
     title: str = Field(min_length=1, max_length=500)
     latex_template: str = ""
     retention_until: date
