@@ -18,6 +18,8 @@
 
   let exercises: ExerciseRecord[] = [];
   let selectedTopic: string = "ALL";
+  let selectedGrade: string = "ALL";
+  let selectedSubject: string = "ALL";
   let searchQuery: string = "";
   let isLoading = false;
   let errorMsg = "";
@@ -41,6 +43,16 @@
   let diffLeftId: string = "";
   let diffRightId: string = "";
   let diffGroupExercises: ExerciseRecord[] = [];
+  let diffLeftLatex: string = "";
+  let diffRightLatex: string = "";
+  let diffLeftMode: "diff" | "edit" = "diff";
+  let diffRightMode: "diff" | "edit" = "diff";
+  let isSavingDiffLeft = false;
+  let isSavingDiffRight = false;
+  let showDiffConfirmClose = false;
+
+  let lastLoadedLeftId = "";
+  let lastLoadedRightId = "";
 
   // Expanded groups tracking — use object for Svelte reactivity
   let expandedGroups: { [groupId: string]: boolean } = {};
@@ -390,12 +402,46 @@
     return { leftLines, rightLines };
   }
 
-  // Lazy: only look up exercises when the diff modal is open
-  $: diffLeftEx = isDiffModalOpen ? (exercises.find((e) => e.id === diffLeftId) || diffGroupExercises.find((e) => e.id === diffLeftId)) : null;
-  $: diffRightEx = isDiffModalOpen ? (exercises.find((e) => e.id === diffRightId) || diffGroupExercises.find((e) => e.id === diffRightId)) : null;
+  $: activeDiffGroupExercises = diffGroupExercises.map(
+    (e) => exercises.find((x) => x.id === e.id) || e
+  );
 
-  // Lazy: only compute expensive diff when modal is open
-  $: sideBySideDiff = isDiffModalOpen ? computeSideBySideDiff(diffLeftEx?.latexBody || "", diffRightEx?.latexBody || "") : { leftLines: [], rightLines: [] };
+  function getDiffSelectLabel(ex: ExerciseRecord): string {
+    const name = ex.name || "Untitled";
+    const v = ex.version || 1;
+    const variantStr = ex.variantKey ? `, Variant: ${ex.variantKey}` : "";
+    return `${name} (v${v}${variantStr})`;
+  }
+
+  // Lazy: only look up exercises when the diff modal is open
+  $: diffLeftEx = isDiffModalOpen
+    ? (exercises.find((e) => e.id === diffLeftId) || activeDiffGroupExercises.find((e) => e.id === diffLeftId))
+    : null;
+  $: diffRightEx = isDiffModalOpen
+    ? (exercises.find((e) => e.id === diffRightId) || activeDiffGroupExercises.find((e) => e.id === diffRightId))
+    : null;
+
+  $: if (diffLeftEx && isDiffModalOpen) {
+    if (diffLeftId !== lastLoadedLeftId) {
+      diffLeftLatex = diffLeftEx.latexBody || "";
+      lastLoadedLeftId = diffLeftId;
+    }
+  }
+
+  $: if (diffRightEx && isDiffModalOpen) {
+    if (diffRightId !== lastLoadedRightId) {
+      diffRightLatex = diffRightEx.latexBody || "";
+      lastLoadedRightId = diffRightId;
+    }
+  }
+
+  $: isDiffLeftDirty = diffLeftEx ? diffLeftLatex !== (diffLeftEx.latexBody || "") : false;
+  $: isDiffRightDirty = diffRightEx ? diffRightLatex !== (diffRightEx.latexBody || "") : false;
+
+  // Lazy: compute diff dynamically from editable buffers when modal is open
+  $: sideBySideDiff = isDiffModalOpen
+    ? computeSideBySideDiff(diffLeftLatex, diffRightLatex)
+    : { leftLines: [], rightLines: [] };
 
   // Preview state
   let isPreviewLoading = false;
@@ -407,16 +453,34 @@
     ),
   ).sort();
 
+  $: availableGrades = Array.from(
+    new Set(
+      exercises.map((e) => e.grade).filter((g): g is string => Boolean(g)),
+    ),
+  ).sort();
+
+  $: availableSubjects = Array.from(
+    new Set(
+      exercises.map((e) => e.subject).filter((s): s is string => Boolean(s)),
+    ),
+  ).sort();
+
   $: filteredExercises = exercises.filter((ex) => {
     const matchesTopic =
       selectedTopic === "ALL" || ex.topicTag === selectedTopic;
+    const matchesGrade =
+      selectedGrade === "ALL" || ex.grade === selectedGrade;
+    const matchesSubject =
+      selectedSubject === "ALL" || ex.subject === selectedSubject;
     const q = searchQuery.toLowerCase().trim();
     const matchesSearch =
       !q ||
       (ex.name && ex.name.toLowerCase().includes(q)) ||
       (ex.topicTag && ex.topicTag.toLowerCase().includes(q)) ||
+      (ex.grade && ex.grade.toLowerCase().includes(q)) ||
+      (ex.subject && ex.subject.toLowerCase().includes(q)) ||
       (ex.latexBody && ex.latexBody.toLowerCase().includes(q));
-    return matchesTopic && matchesSearch;
+    return matchesTopic && matchesGrade && matchesSubject && matchesSearch;
   });
 
   // Grouped view: filter then group
@@ -439,6 +503,8 @@
             teacherId: e.teacher_id,
             name: e.name,
             topicTag: e.topic_tag,
+            grade: e.grade || undefined,
+            subject: e.subject || undefined,
             latexBody: e.latex_body,
             maxPoints: e.max_points,
             version: e.version || 1,
@@ -579,6 +645,8 @@
             teacherId: e.teacher_id,
             name: e.name,
             topicTag: e.topic_tag,
+            grade: e.grade || undefined,
+            subject: e.subject || undefined,
             latexBody: e.latex_body,
             maxPoints: e.max_points,
             version: e.version || 1,
@@ -623,7 +691,89 @@
     diffLeftId = ex.id;
     const other = diffGroupExercises.find((e) => e.id !== ex.id) || diffGroupExercises[0];
     diffRightId = other.id;
+    diffLeftLatex = ex.latexBody || "";
+    diffRightLatex = (diffGroupExercises.find((e) => e.id === diffRightId) || ex).latexBody || "";
+    lastLoadedLeftId = diffLeftId;
+    lastLoadedRightId = diffRightId;
+    diffLeftMode = "diff";
+    diffRightMode = "diff";
+    showDiffConfirmClose = false;
     isDiffModalOpen = true;
+  }
+
+  async function handleSaveDiffLeft() {
+    if (!diffLeftEx) return;
+    isSavingDiffLeft = true;
+    try {
+      const updatedMaxPoints = parseExerciseScore(diffLeftLatex);
+      const key = get(sessionStore).sessionKey;
+
+      if ($storagePolicyStore === "server-synced") {
+        await api.patch(`/exercises/${diffLeftEx.id}`, {
+          latex_body: diffLeftLatex,
+          max_points: updatedMaxPoints,
+        });
+      }
+
+      const updatedRecord: ExerciseRecord = {
+        ...diffLeftEx,
+        latexBody: diffLeftLatex,
+        maxPoints: updatedMaxPoints,
+        updatedAt: new Date().toISOString(),
+      };
+
+      const encrypted = await encryptExercise(updatedRecord, key);
+      await db.exercises.put(encrypted);
+      await loadExercises();
+    } catch (err: any) {
+      alert(`Failed to save left exercise: ${err.message}`);
+    } finally {
+      isSavingDiffLeft = false;
+    }
+  }
+
+  async function handleSaveDiffRight() {
+    if (!diffRightEx) return;
+    isSavingDiffRight = true;
+    try {
+      const updatedMaxPoints = parseExerciseScore(diffRightLatex);
+      const key = get(sessionStore).sessionKey;
+
+      if ($storagePolicyStore === "server-synced") {
+        await api.patch(`/exercises/${diffRightEx.id}`, {
+          latex_body: diffRightLatex,
+          max_points: updatedMaxPoints,
+        });
+      }
+
+      const updatedRecord: ExerciseRecord = {
+        ...diffRightEx,
+        latexBody: diffRightLatex,
+        maxPoints: updatedMaxPoints,
+        updatedAt: new Date().toISOString(),
+      };
+
+      const encrypted = await encryptExercise(updatedRecord, key);
+      await db.exercises.put(encrypted);
+      await loadExercises();
+    } catch (err: any) {
+      alert(`Failed to save right exercise: ${err.message}`);
+    } finally {
+      isSavingDiffRight = false;
+    }
+  }
+
+  function requestCloseDiffModal() {
+    if (isDiffLeftDirty || isDiffRightDirty) {
+      showDiffConfirmClose = true;
+    } else {
+      forceCloseDiffModal();
+    }
+  }
+
+  function forceCloseDiffModal() {
+    showDiffConfirmClose = false;
+    isDiffModalOpen = false;
   }
 
   function openVariantModal(ex: ExerciseRecord) {
@@ -738,9 +888,35 @@
     <div class="search-box">
       <input
         type="text"
-        placeholder="Search exercises by name, topic, or LaTeX content..."
+        placeholder="Search exercises by name, topic, grade, subject, or LaTeX content..."
         bind:value={searchQuery}
       />
+    </div>
+
+    <div class="filter-selects">
+      {#if availableGrades.length > 0}
+        <div class="select-group">
+          <label for="grade-select">Grade:</label>
+          <select id="grade-select" bind:value={selectedGrade}>
+            <option value="ALL">All Grades</option>
+            {#each availableGrades as g}
+              <option value={g}>Grade {g}</option>
+            {/each}
+          </select>
+        </div>
+      {/if}
+
+      {#if availableSubjects.length > 0}
+        <div class="select-group">
+          <label for="subject-select">Subject:</label>
+          <select id="subject-select" bind:value={selectedSubject}>
+            <option value="ALL">All Subjects</option>
+            {#each availableSubjects as s}
+              <option value={s}>{s}</option>
+            {/each}
+          </select>
+        </div>
+      {/if}
     </div>
 
     <div class="topic-pills">
@@ -749,7 +925,7 @@
         class:active={selectedTopic === "ALL"}
         on:click={() => (selectedTopic = "ALL")}
       >
-        All ({filteredGroups.length})
+        All Topics ({filteredGroups.length})
       </button>
       {#each availableTopics as topic}
         {@const groupCount = filteredGroups.filter((g) => g.topicTag === topic).length}
@@ -794,6 +970,12 @@
               <div class="group-meta">
                 {#if group.topicTag}
                   <span class="topic-badge">{group.topicTag}</span>
+                {/if}
+                {#if rep?.grade}
+                  <span class="meta-badge grade-badge">Klasse {rep.grade}</span>
+                {/if}
+                {#if rep?.subject}
+                  <span class="meta-badge subject-badge">{rep.subject}</span>
                 {/if}
                 <span class="score-badge">
                   {group.variants.size > 1 && group.minPoints !== group.maxPoints
@@ -1086,13 +1268,13 @@
     class="modal-backdrop"
     role="button"
     tabindex="-1"
-    on:click|self={() => (isDiffModalOpen = false)}
-    on:keydown|self={(e) => e.key === "Escape" && (isDiffModalOpen = false)}
+    on:click|self={requestCloseDiffModal}
+    on:keydown|self={(e) => e.key === "Escape" && requestCloseDiffModal()}
   >
     <div class="modal-content large-modal">
       <div class="modal-header">
         <h3>Exercise LaTeX Code Diff Comparison</h3>
-        <button class="close-btn" on:click={() => (isDiffModalOpen = false)}>✕</button>
+        <button class="close-btn" on:click={requestCloseDiffModal}>✕</button>
       </div>
 
       <div class="modal-body">
@@ -1100,9 +1282,9 @@
           <div class="diff-select-group">
             <label for="diffLeftSelect">Base / Left Version:</label>
             <select id="diffLeftSelect" bind:value={diffLeftId}>
-              {#each diffGroupExercises as ex}
+              {#each activeDiffGroupExercises as ex}
                 <option value={ex.id}>
-                  {ex.name} (v{ex.version || 1}{ex.variantKey ? `, Variant: ${ex.variantKey}` : ""})
+                  {getDiffSelectLabel(ex)}
                 </option>
               {/each}
             </select>
@@ -1111,9 +1293,9 @@
           <div class="diff-select-group">
             <label for="diffRightSelect">Compared / Right Version:</label>
             <select id="diffRightSelect" bind:value={diffRightId}>
-              {#each diffGroupExercises as ex}
+              {#each activeDiffGroupExercises as ex}
                 <option value={ex.id}>
-                  {ex.name} (v{ex.version || 1}{ex.variantKey ? `, Variant: ${ex.variantKey}` : ""})
+                  {getDiffSelectLabel(ex)}
                 </option>
               {/each}
             </select>
@@ -1122,53 +1304,141 @@
 
         <div class="diff-panes">
           <div class="diff-pane">
-            <h4>Left: {diffLeftEx?.name || "Original"} (v{diffLeftEx?.version || 1})</h4>
-            <div class="code-diff-container">
-              {#each sideBySideDiff.leftLines as line}
-                <div class="diff-line {line.type}">
-                  <span class="line-num">{line.lineNumber ?? ""}</span>
-                  <span class="line-content">
-                    {#if line.tokens}
-                      {#each line.tokens as token}
-                        <span class="word-token {token.type}">{@html highlightLatexToHtml(token.text)}</span>
-                      {/each}
-                    {:else}
-                      {@html highlightLatexToHtml(line.text || "")}
-                    {/if}
-                  </span>
+            <div class="diff-pane-header">
+              <h4>Left: {diffLeftEx?.name || "Original"} (v{diffLeftEx?.version || 1})</h4>
+              <div class="pane-controls">
+                <div class="mode-toggle">
+                  <button
+                    type="button"
+                    class="toggle-btn"
+                    class:active={diffLeftMode === "diff"}
+                    on:click={() => (diffLeftMode = "diff")}
+                  >
+                    Diff View
+                  </button>
+                  <button
+                    type="button"
+                    class="toggle-btn"
+                    class:active={diffLeftMode === "edit"}
+                    on:click={() => (diffLeftMode = "edit")}
+                  >
+                    Edit Code
+                  </button>
                 </div>
-              {/each}
+                {#if isDiffLeftDirty}
+                  <button
+                    type="button"
+                    class="save-pane-btn"
+                    on:click={handleSaveDiffLeft}
+                    disabled={isSavingDiffLeft}
+                  >
+                    {isSavingDiffLeft ? "Saving..." : "Save Left"}
+                  </button>
+                {/if}
+              </div>
             </div>
+
+            {#if diffLeftMode === "edit"}
+              <div class="diff-editor-wrapper">
+                <LatexEditor bind:value={diffLeftLatex} rows={14} />
+              </div>
+            {:else}
+              <div class="code-diff-container">
+                {#each sideBySideDiff.leftLines as line}
+                  <div class="diff-line {line.type}">
+                    <span class="line-num">{line.lineNumber ?? ""}</span>
+                    <span class="line-content">
+                      {#if line.tokens}
+                        {#each line.tokens as token}
+                          <span class="word-token {token.type}">{@html highlightLatexToHtml(token.text)}</span>
+                        {/each}
+                      {:else}
+                        {@html highlightLatexToHtml(line.text || "")}
+                      {/if}
+                    </span>
+                  </div>
+                {/each}
+              </div>
+            {/if}
           </div>
 
           <div class="diff-pane">
-            <h4>Right: {diffRightEx?.name || "Compared"} (v{diffRightEx?.version || 1})</h4>
-            <div class="code-diff-container">
-              {#each sideBySideDiff.rightLines as line}
-                <div class="diff-line {line.type}">
-                  <span class="line-num">{line.lineNumber ?? ""}</span>
-                  <span class="line-content">
-                    {#if line.tokens}
-                      {#each line.tokens as token}
-                        <span class="word-token {token.type}">{@html highlightLatexToHtml(token.text)}</span>
-                      {/each}
-                    {:else}
-                      {@html highlightLatexToHtml(line.text || "")}
-                    {/if}
-                  </span>
+            <div class="diff-pane-header">
+              <h4>Right: {diffRightEx?.name || "Compared"} (v{diffRightEx?.version || 1})</h4>
+              <div class="pane-controls">
+                <div class="mode-toggle">
+                  <button
+                    type="button"
+                    class="toggle-btn"
+                    class:active={diffRightMode === "diff"}
+                    on:click={() => (diffRightMode = "diff")}
+                  >
+                    Diff View
+                  </button>
+                  <button
+                    type="button"
+                    class="toggle-btn"
+                    class:active={diffRightMode === "edit"}
+                    on:click={() => (diffRightMode = "edit")}
+                  >
+                    Edit Code
+                  </button>
                 </div>
-              {/each}
+                {#if isDiffRightDirty}
+                  <button
+                    type="button"
+                    class="save-pane-btn"
+                    on:click={handleSaveDiffRight}
+                    disabled={isSavingDiffRight}
+                  >
+                    {isSavingDiffRight ? "Saving..." : "Save Right"}
+                  </button>
+                {/if}
+              </div>
             </div>
+
+            {#if diffRightMode === "edit"}
+              <div class="diff-editor-wrapper">
+                <LatexEditor bind:value={diffRightLatex} rows={14} />
+              </div>
+            {:else}
+              <div class="code-diff-container">
+                {#each sideBySideDiff.rightLines as line}
+                  <div class="diff-line {line.type}">
+                    <span class="line-num">{line.lineNumber ?? ""}</span>
+                    <span class="line-content">
+                      {#if line.tokens}
+                        {#each line.tokens as token}
+                          <span class="word-token {token.type}">{@html highlightLatexToHtml(token.text)}</span>
+                        {/each}
+                      {:else}
+                        {@html highlightLatexToHtml(line.text || "")}
+                      {/if}
+                    </span>
+                  </div>
+                {/each}
+              </div>
+            {/if}
           </div>
         </div>
       </div>
 
       <div class="modal-footer">
-        <button class="cancel-btn" on:click={() => (isDiffModalOpen = false)}>Close</button>
+        <button class="cancel-btn" on:click={requestCloseDiffModal}>Close</button>
       </div>
     </div>
   </div>
 {/if}
+
+<ConfirmDialog
+  isOpen={showDiffConfirmClose}
+  title="Discard Unsaved Diff Changes?"
+  message="You have unsaved changes in the LaTeX diff editor. Discarding will lose your changes."
+  confirmText="Discard Changes"
+  cancelText="Keep Editing"
+  on:confirm={forceCloseDiffModal}
+  on:cancel={() => (showDiffConfirmClose = false)}
+/>
 
 <style>
   .exercise-library-page {
@@ -1302,6 +1572,47 @@
     font-size: 0.75rem;
     padding: 0.15rem 0.5rem;
     border-radius: 4px;
+  }
+
+  .meta-badge {
+    font-size: 0.75rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+  }
+
+  .grade-badge {
+    background: #1e1b4b;
+    color: #c7d2fe;
+    border: 1px solid #4338ca;
+  }
+
+  .subject-badge {
+    background: #064e3b;
+    color: #a7f3d0;
+    border: 1px solid #047857;
+  }
+
+  .filter-selects {
+    display: flex;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+  }
+
+  .select-group {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: #cbd5e1;
+    font-size: 0.875rem;
+  }
+
+  .select-group select {
+    background: #1e293b;
+    border: 1px solid #334155;
+    color: white;
+    padding: 0.375rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
   }
 
   .score-badge {
@@ -1773,8 +2084,76 @@
     margin-bottom: 1rem;
   }
 
+  .diff-pane-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .pane-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .mode-toggle {
+    display: flex;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 2px;
+  }
+
+  .mode-toggle .toggle-btn {
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    padding: 0.25rem 0.6rem;
+    font-size: 0.75rem;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .mode-toggle .toggle-btn.active {
+    background: #38bdf8;
+    color: #0f172a;
+    font-weight: 600;
+  }
+
+  .save-pane-btn {
+    background: #10b981;
+    color: white;
+    border: none;
+    padding: 0.25rem 0.6rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+
+  .save-pane-btn:hover:not(:disabled) {
+    background: #059669;
+  }
+
+  .save-pane-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .diff-editor-wrapper {
+    max-height: 450px;
+    height: 450px;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
   .diff-pane h4 {
-    margin: 0 0 0.5rem 0;
+    margin: 0;
     color: #38bdf8;
     font-size: 0.9rem;
   }

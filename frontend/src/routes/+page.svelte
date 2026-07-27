@@ -13,6 +13,31 @@
   let importStatus = '';
   let expiredExam: { exam: ExamRecord; check: RetentionCheckResult } | null = null;
 
+  let searchQuery = '';
+  let selectedGradeFilter = 'ALL';
+  let selectedSubjectFilter = 'ALL';
+
+  $: availableGrades = Array.from(
+    new Set(exams.map((e) => e.klasse).filter((k): k is string => Boolean(k)))
+  ).sort();
+
+  $: availableSubjects = Array.from(
+    new Set(exams.map((e) => e.fach).filter((f): f is string => Boolean(f)))
+  ).sort();
+
+  $: filteredExams = exams.filter((e) => {
+    const matchesGrade = selectedGradeFilter === 'ALL' || e.klasse === selectedGradeFilter;
+    const matchesSubject = selectedSubjectFilter === 'ALL' || e.fach === selectedSubjectFilter;
+    const q = searchQuery.toLowerCase().trim();
+    const matchesSearch =
+      !q ||
+      (e.title && e.title.toLowerCase().includes(q)) ||
+      (e.klasse && e.klasse.toLowerCase().includes(q)) ||
+      (e.fach && e.fach.toLowerCase().includes(q)) ||
+      (e.testart && e.testart.toLowerCase().includes(q));
+    return matchesGrade && matchesSubject && matchesSearch;
+  });
+
   onMount(async () => {
     if (!$isUnlocked) {
       window.location.href = '/unlock';
@@ -129,17 +154,67 @@
         <p class="sub">Create a new exam or import a .bgproj archive above.</p>
       </div>
     {:else}
-      <div class="exams-grid">
-        {#each exams as exam}
-          <div class="exam-card">
-            <h3>{exam.title}</h3>
-            <p class="date">Retention until: {exam.retentionUntil}</p>
-            <div class="actions">
-              <a href="/exam/{exam.id}">Open Exam</a>
-            </div>
+      <div class="dashboard-filter-bar">
+        <input
+          type="text"
+          placeholder="Search exams by title, class, subject..."
+          bind:value={searchQuery}
+          class="dashboard-search-input"
+        />
+
+        {#if availableGrades.length > 0}
+          <div class="select-group">
+            <label for="dashboard-grade">Grade:</label>
+            <select id="dashboard-grade" bind:value={selectedGradeFilter}>
+              <option value="ALL">All Grades</option>
+              {#each availableGrades as g}
+                <option value={g}>Grade {g}</option>
+              {/each}
+            </select>
           </div>
-        {/each}
+        {/if}
+
+        {#if availableSubjects.length > 0}
+          <div class="select-group">
+            <label for="dashboard-subject">Subject:</label>
+            <select id="dashboard-subject" bind:value={selectedSubjectFilter}>
+              <option value="ALL">All Subjects</option>
+              {#each availableSubjects as s}
+                <option value={s}>{s}</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
       </div>
+
+      {#if filteredExams.length === 0}
+        <div class="empty-state">
+          <p>No exams match your search or filter criteria.</p>
+        </div>
+      {:else}
+        <div class="exams-grid">
+          {#each filteredExams as exam}
+            <div class="exam-card">
+              <h3>{exam.title}</h3>
+              <div class="exam-tags">
+                {#if exam.klasse}
+                  <span class="exam-tag grade-tag">Klasse {exam.klasse}</span>
+                {/if}
+                {#if exam.fach}
+                  <span class="exam-tag subject-tag">{exam.fach}</span>
+                {/if}
+                {#if exam.testart}
+                  <span class="exam-tag testart-tag">{exam.testart}</span>
+                {/if}
+              </div>
+              <p class="date">Retention until: {exam.retentionUntil}</p>
+              <div class="actions">
+                <a href="/exam/{exam.id}">Open Exam</a>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
     {/if}
   {/if}
 </div>
@@ -273,6 +348,71 @@
   .empty-state .sub {
     font-size: 0.875rem;
     color: #64748b;
+  }
+
+  .dashboard-filter-bar {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-bottom: 1.5rem;
+  }
+
+  .dashboard-search-input {
+    flex: 1;
+    min-width: 240px;
+    padding: 0.625rem 0.875rem;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    color: white;
+  }
+
+  .select-group {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: #cbd5e1;
+    font-size: 0.875rem;
+  }
+
+  .select-group select {
+    background: #1e293b;
+    border: 1px solid #334155;
+    color: white;
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+  }
+
+  .exam-tags {
+    display: flex;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.75rem;
+  }
+
+  .exam-tag {
+    font-size: 0.75rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+  }
+
+  .grade-tag {
+    background: #1e1b4b;
+    color: #c7d2fe;
+    border: 1px solid #4338ca;
+  }
+
+  .subject-tag {
+    background: #064e3b;
+    color: #a7f3d0;
+    border: 1px solid #047857;
+  }
+
+  .testart-tag {
+    background: #334155;
+    color: #e2e8f0;
   }
 
   .exams-grid {

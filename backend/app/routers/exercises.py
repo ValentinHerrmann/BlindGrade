@@ -53,6 +53,8 @@ def _to_res(ex: Exercise) -> ExerciseResponse:
         teacher_id=ex.teacher_id,
         name=ex.name,
         topic_tag=ex.topic_tag,
+        grade=ex.grade,
+        subject=ex.subject,
         latex_body=ex.latex_body,
         max_points=ex.max_points,
         version=ex.version,
@@ -69,6 +71,8 @@ def _to_res(ex: Exercise) -> ExerciseResponse:
 @router.get("", response_model=list[ExerciseResponse])
 async def list_exercises(
     topic_tag: str | None = None,
+    grade: str | None = None,
+    subject: str | None = None,
     search: str | None = None,
     group_id: uuid.UUID | None = None,
     current_only: bool = True,
@@ -89,6 +93,12 @@ async def list_exercises(
     if topic_tag:
         query = query.where(Exercise.topic_tag == topic_tag)
 
+    if grade:
+        query = query.where(Exercise.grade == grade)
+
+    if subject:
+        query = query.where(Exercise.subject == subject)
+
     if search:
         search_pattern = f"%{search}%"
         query = query.where(
@@ -96,6 +106,8 @@ async def list_exercises(
                 Exercise.name.ilike(search_pattern),
                 Exercise.latex_body.ilike(search_pattern),
                 Exercise.topic_tag.ilike(search_pattern),
+                Exercise.grade.ilike(search_pattern),
+                Exercise.subject.ilike(search_pattern),
                 Exercise.variant_key.ilike(search_pattern),
             )
         )
@@ -122,6 +134,8 @@ async def create_exercise(
             teacher_id=teacher.id,
             name=body.name or "Untitled Group",
             topic_tag=body.topic_tag,
+            grade=body.grade,
+            subject=body.subject,
         )
         db.add(group)
         await db.flush()
@@ -131,6 +145,8 @@ async def create_exercise(
         teacher_id=teacher.id,
         name=body.name,
         topic_tag=body.topic_tag,
+        grade=body.grade,
+        subject=body.subject,
         latex_body=body.latex_body,
         max_points=computed_score,
         version=1,
@@ -179,6 +195,10 @@ async def update_exercise(
         ex.name = body.name
     if body.topic_tag is not None:
         ex.topic_tag = body.topic_tag
+    if body.grade is not None:
+        ex.grade = body.grade
+    if body.subject is not None:
+        ex.subject = body.subject
     if body.latex_body is not None:
         ex.latex_body = body.latex_body
         ex.max_points = parse_exercise_score(body.latex_body)
@@ -215,6 +235,8 @@ async def create_new_version(
             teacher_id=teacher.id,
             name=old_ex.name or "Untitled Group",
             topic_tag=old_ex.topic_tag,
+            grade=old_ex.grade,
+            subject=old_ex.subject,
         )
         db.add(group)
         await db.flush()
@@ -228,6 +250,8 @@ async def create_new_version(
         teacher_id=teacher.id,
         name=body.name if body.name is not None else old_ex.name,
         topic_tag=body.topic_tag if body.topic_tag is not None else old_ex.topic_tag,
+        grade=body.grade if body.grade is not None else old_ex.grade,
+        subject=body.subject if body.subject is not None else old_ex.subject,
         latex_body=new_latex,
         max_points=computed_score,
         version=old_ex.version + 1,
@@ -263,6 +287,8 @@ async def create_new_variant(
             teacher_id=teacher.id,
             name=base_ex.name or "Untitled Group",
             topic_tag=base_ex.topic_tag,
+            grade=base_ex.grade,
+            subject=base_ex.subject,
         )
         db.add(group)
         await db.flush()
@@ -275,6 +301,8 @@ async def create_new_variant(
         teacher_id=teacher.id,
         name=body.name or base_ex.name,
         topic_tag=body.topic_tag or base_ex.topic_tag,
+        grade=body.grade or base_ex.grade,
+        subject=body.subject or base_ex.subject,
         latex_body=body.latex_body,
         max_points=computed_score,
         version=1,

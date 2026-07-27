@@ -19,6 +19,8 @@ class ExerciseGroup(Base):
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     topic_tag: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    grade: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+    subject: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

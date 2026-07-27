@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -28,6 +28,8 @@ def _to_exercise_response(ex: Exercise, order_index: int = 1) -> ExerciseRespons
         teacher_id=ex.teacher_id,
         name=ex.name,
         topic_tag=ex.topic_tag,
+        grade=ex.grade,
+        subject=ex.subject,
         latex_body=ex.latex_body,
         max_points=ex.max_points,
         version=ex.version,
@@ -82,18 +84,36 @@ async def _fetch_exam_exercises(exam_id: uuid.UUID, db: AsyncSession) -> list[tu
 
 @router.get("", response_model=list[ExamResponse])
 async def list_exams(
+    grade: str | None = None,
+    subject: str | None = None,
+    search: str | None = None,
     teacher: Teacher = Depends(get_current_teacher),
     db: AsyncSession = Depends(get_db),
 ) -> list[ExamResponse]:
     """List all non-deleted exams belonging to the authenticated teacher."""
-    result = await db.execute(
-        select(Exam)
-        .where(
-            Exam.teacher_id == teacher.id,
-            Exam.deleted_at.is_(None),
-        )
-        .order_by(Exam.created_at.desc())
+    query = select(Exam).where(
+        Exam.teacher_id == teacher.id,
+        Exam.deleted_at.is_(None),
     )
+
+    if grade:
+        query = query.where(Exam.klasse == grade)
+
+    if subject:
+        query = query.where(Exam.fach == subject)
+
+    if search:
+        search_pattern = f"%{search}%"
+        query = query.where(
+            or_(
+                Exam.title.ilike(search_pattern),
+                Exam.klasse.ilike(search_pattern),
+                Exam.fach.ilike(search_pattern),
+            )
+        )
+
+    query = query.order_by(Exam.created_at.desc())
+    result = await db.execute(query)
     exams = result.scalars().all()
     out = []
     for e in exams:

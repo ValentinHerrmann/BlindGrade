@@ -303,3 +303,119 @@ async def test_compile_endpoint_requires_auth(client: AsyncClient, db: AsyncSess
         assert auth_res.content == b"%PDF-1.4 fake"
 
 
+@pytest.mark.asyncio
+async def test_exercise_and_exam_filtering(client: AsyncClient, db: AsyncSession) -> None:
+    await _create_teacher_and_login(client, db, "filterteacher@example.com")
+
+    # Create exercises with different grade and subject tags
+    await client.post(
+        "/api/v1/exercises",
+        json={
+            "name": "Math_Ex_10",
+            "topic_tag": "_Algebra",
+            "grade": "10",
+            "subject": "Mathematik",
+            "latex_body": "Algebra Q \\BE",
+        },
+    )
+    await client.post(
+        "/api/v1/exercises",
+        json={
+            "name": "CS_Ex_12",
+            "topic_tag": "_Vererbung",
+            "grade": "12",
+            "subject": "Informatik",
+            "latex_body": "OOP Q \\BE",
+        },
+    )
+
+    # Filter exercises by grade
+    res_grade = await client.get("/api/v1/exercises?grade=10")
+    assert res_grade.status_code == 200
+    exs_grade = res_grade.json()
+    assert len(exs_grade) == 1
+    assert exs_grade[0]["name"] == "Math_Ex_10"
+    assert exs_grade[0]["grade"] == "10"
+    assert exs_grade[0]["subject"] == "Mathematik"
+
+    # Filter exercises by subject
+    res_subj = await client.get("/api/v1/exercises?subject=Informatik")
+    assert res_subj.status_code == 200
+    exs_subj = res_subj.json()
+    assert len(exs_subj) == 1
+    assert exs_subj[0]["name"] == "CS_Ex_12"
+
+    # Search query matching grade/subject
+    res_search = await client.get("/api/v1/exercises?search=Mathematik")
+    assert res_search.status_code == 200
+    assert len(res_search.json()) == 1
+
+    # Create exams with grade (klasse) and subject (fach)
+    retention_date = (date.today() + timedelta(days=365)).isoformat()
+    await client.post(
+        "/api/v1/exams",
+        json={
+            "title": "Math Exam 10a",
+            "klasse": "10a",
+            "fach": "Mathematik",
+            "retention_until": retention_date,
+        },
+    )
+    await client.post(
+        "/api/v1/exams",
+        json={
+            "title": "CS Exam 12b",
+            "klasse": "12b",
+            "fach": "Informatik",
+            "retention_until": retention_date,
+        },
+    )
+
+    # Filter exams by grade and subject
+    res_exam_grade = await client.get("/api/v1/exams?grade=10a")
+    assert res_exam_grade.status_code == 200
+    assert len(res_exam_grade.json()) == 1
+    assert res_exam_grade.json()[0]["title"] == "Math Exam 10a"
+
+    res_exam_subj = await client.get("/api/v1/exams?subject=Informatik")
+    assert res_exam_subj.status_code == 200
+    assert len(res_exam_subj.json()) == 1
+    assert res_exam_subj.json()[0]["title"] == "CS Exam 12b"
+
+
+@pytest.mark.asyncio
+async def test_exercise_usage_and_deletion(client: AsyncClient, db: AsyncSession) -> None:
+    await _create_teacher_and_login(client, db, "usageteacher@example.com")
+
+    # Create an exercise
+    create_res = await client.post(
+        "/api/v1/exercises",
+        json={
+            "name": "DeleteTestEx",
+            "topic_tag": "Test",
+            "grade": "11",
+            "subject": "Physik",
+            "latex_body": "Physik Frage \\BE",
+        },
+    )
+    assert create_res.status_code == 201
+    ex_id = create_res.json()["id"]
+
+    # Check usage endpoint
+    usage_res = await client.get(f"/api/v1/exercises/{ex_id}/usage")
+    assert usage_res.status_code == 200
+    usage_data = usage_res.json()
+    assert usage_data["exam_count"] == 0
+    assert usage_data["exams"] == []
+
+    # Delete exercise
+    del_res = await client.delete(f"/api/v1/exercises/{ex_id}")
+    assert del_res.status_code == 240 or del_res.status_code == 204
+
+    # Verify exercise is gone
+    get_res = await client.get(f"/api/v1/exercises/{ex_id}")
+    assert get_res.status_code == 404
+
+
+
+

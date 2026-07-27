@@ -30,6 +30,8 @@
   let libraryExercises: ExerciseRecord[] = [];
   let selectedLibraryIds: string[] = [];
   let selectedTopicFilter: string = "ALL";
+  let selectedGradeFilter: string = "ALL";
+  let selectedSubjectFilter: string = "ALL";
   let searchQuery: string = "";
   let activeTab: "library" | "custom" = "library";
 
@@ -96,17 +98,39 @@ Frage hier eingeben... \\BE
     ),
   ).sort();
 
+  $: availableGrades = Array.from(
+    new Set(
+      libraryExercises
+        .map((e) => e.grade)
+        .filter((g): g is string => Boolean(g)),
+    ),
+  ).sort();
+
+  $: availableSubjects = Array.from(
+    new Set(
+      libraryExercises
+        .map((e) => e.subject)
+        .filter((s): s is string => Boolean(s)),
+    ),
+  ).sort();
+
   $: filteredLibrary = libraryExercises.filter((ex) => {
     const matchesTopic =
       selectedTopicFilter === "ALL" || ex.topicTag === selectedTopicFilter;
+    const matchesGrade =
+      selectedGradeFilter === "ALL" || ex.grade === selectedGradeFilter;
+    const matchesSubject =
+      selectedSubjectFilter === "ALL" || ex.subject === selectedSubjectFilter;
     const q = searchQuery.toLowerCase().trim();
     const matchesSearch =
       !q ||
       (ex.name && ex.name.toLowerCase().includes(q)) ||
       (ex.topicTag && ex.topicTag.toLowerCase().includes(q)) ||
+      (ex.grade && ex.grade.toLowerCase().includes(q)) ||
+      (ex.subject && ex.subject.toLowerCase().includes(q)) ||
       (ex.variantKey && ex.variantKey.toLowerCase().includes(q)) ||
       (ex.latexBody && ex.latexBody.toLowerCase().includes(q));
-    return matchesTopic && matchesSearch;
+    return matchesTopic && matchesGrade && matchesSubject && matchesSearch;
   });
 
   $: filteredGroups = groupExercises(filteredLibrary);
@@ -202,6 +226,8 @@ Frage hier eingeben... \\BE
             teacherId: e.teacher_id,
             name: e.name,
             topicTag: e.topic_tag,
+            grade: e.grade || undefined,
+            subject: e.subject || undefined,
             latexBody: e.latex_body,
             maxPoints: e.max_points,
             version: e.version || 1,
@@ -562,13 +588,39 @@ ${exerciseInputs}
           <div class="search-metrics-row">
             <input
               type="text"
-              placeholder="Search exercise library by name, topic, variant, or LaTeX content..."
+              placeholder="Search exercise library by name, topic, grade, subject, variant, or LaTeX content..."
               bind:value={searchQuery}
               class="search-input"
             />
             <span class="library-metrics">
               {filteredGroups.length} Exercise Groups ({totalVariantsCount} Variants)
             </span>
+          </div>
+
+          <div class="filter-selects-row">
+            {#if availableGrades.length > 0}
+              <div class="select-group">
+                <label for="picker-grade">Grade:</label>
+                <select id="picker-grade" bind:value={selectedGradeFilter}>
+                  <option value="ALL">All Grades</option>
+                  {#each availableGrades as g}
+                    <option value={g}>Grade {g}</option>
+                  {/each}
+                </select>
+              </div>
+            {/if}
+
+            {#if availableSubjects.length > 0}
+              <div class="select-group">
+                <label for="picker-subject">Subject:</label>
+                <select id="picker-subject" bind:value={selectedSubjectFilter}>
+                  <option value="ALL">All Subjects</option>
+                  {#each availableSubjects as s}
+                    <option value={s}>{s}</option>
+                  {/each}
+                </select>
+              </div>
+            {/if}
           </div>
 
           <div class="topic-pills">

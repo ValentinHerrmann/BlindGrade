@@ -142,6 +142,14 @@ async def import_sample_project(project_dir: Path, teacher_email: str) -> None:
                         score = parse_exercise_score(ex_content)
                         topic = rel_input.split("/")[0] if "/" in rel_input else None
 
+                        # Extract grade/grade number if present in ex_name or topic (e.g. CA-10 -> 10)
+                        ex_grade = klasse
+                        grade_match = re.search(r"-(\d{1,2})_", ex_name)
+                        if grade_match:
+                            ex_grade = grade_match.group(1)
+
+                        ex_subject = fach or "Informatik"
+
                         group_id = None
                         variant_key = None
                         if "_" in ex_name:
@@ -162,6 +170,8 @@ async def import_sample_project(project_dir: Path, teacher_email: str) -> None:
                                     teacher_id=teacher.id,
                                     name=group_name,
                                     topic_tag=topic,
+                                    grade=ex_grade,
+                                    subject=ex_subject,
                                 )
                                 session.add(group)
                                 await session.flush()
@@ -171,6 +181,8 @@ async def import_sample_project(project_dir: Path, teacher_email: str) -> None:
                             teacher_id=teacher.id,
                             name=ex_name,
                             topic_tag=topic,
+                            grade=ex_grade,
+                            subject=ex_subject,
                             latex_body=ex_content,
                             max_points=score,
                             version=1,

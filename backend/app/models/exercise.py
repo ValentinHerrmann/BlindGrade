@@ -22,6 +22,8 @@ class Exercise(Base):
     order_index: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     max_points: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     topic_tag: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    grade: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+    subject: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
     name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     latex_body: Mapped[str | None] = mapped_column(Text, nullable=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

@@ -1,6 +1,6 @@
 """add soft-delete and retention fields to student_identities and scan_submissions
 
-Revision ID: 0006_student_identity_purge_fields
+Revision ID: 0006_student_identity_purge
 Revises: 0005_create_user_audit
 Create Date: 2026-07-26
 """
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "0006_student_identity_purge_fields"
+revision = "0006_student_identity_purge"
 down_revision = "0005_create_user_audit"
 branch_labels = None
 depends_on = None

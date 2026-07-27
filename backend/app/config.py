@@ -55,9 +55,10 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def derive_sync_url(self) -> "Settings":
         if not self.DATABASE_URL_SYNC:
-            # Derive psycopg2 URL from asyncpg URL
-            self.DATABASE_URL_SYNC = self.DATABASE_URL.replace(
-                "postgresql+asyncpg://", "postgresql+psycopg2://"
+            # Derive sync DB URL from async DB URL
+            self.DATABASE_URL_SYNC = (
+                self.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
+                .replace("sqlite+aiosqlite://", "sqlite://")
             )
         return self
 
