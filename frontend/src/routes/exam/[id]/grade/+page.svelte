@@ -166,6 +166,7 @@
         points: [{ x, y }],
         color: drawTool === "check" ? "#22c55e" : "#ef4444",
       });
+      sessionStore.setDirty(true);
       redrawOverlay();
       return;
     }
@@ -176,6 +177,7 @@
       points: [{ x, y }],
       color: penColor,
     });
+    sessionStore.setDirty(true);
   }
 
   function handleMouseMove(e: MouseEvent) {

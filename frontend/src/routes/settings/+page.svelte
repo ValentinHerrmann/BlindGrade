@@ -20,6 +20,7 @@
   } from "$lib/services/migrationService";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
+  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
 
   let students: StudentRecord[] = [];
   let isErasing = false;
@@ -42,6 +43,21 @@
   let purgePassword = "";
   let isPurging = false;
   let isRestoring = false;
+  let showPurgeConfirmClose = false;
+
+  function requestClosePurgeModal() {
+    if (purgePassword) {
+      showPurgeConfirmClose = true;
+    } else {
+      forceClosePurgeModal();
+    }
+  }
+
+  function forceClosePurgeModal() {
+    showPurgeConfirmClose = false;
+    showPurgeModal = false;
+    purgePassword = "";
+  }
 
   onMount(async () => {
     if (!$isUnlocked) {
@@ -308,7 +324,13 @@
   {/if}
 
   {#if showPurgeModal}
-    <div class="modal-backdrop">
+    <div
+      class="modal-backdrop"
+      role="button"
+      tabindex="-1"
+      on:click|self={requestClosePurgeModal}
+      on:keydown|self={(e) => e.key === "Escape" && requestClosePurgeModal()}
+    >
       <div class="modal-card">
         <h3>Switch to Local-Only & Server Student Data Purge</h3>
         <p>
@@ -356,10 +378,7 @@
           </button>
           <button
             class="secondary-btn"
-            on:click={() => {
-              showPurgeModal = false;
-              purgePassword = "";
-            }}
+            on:click={requestClosePurgeModal}
             disabled={isPurging}
           >
             Cancel
@@ -385,6 +404,16 @@
     </div>
   {/if}
 {/if}
+
+<ConfirmDialog
+  isOpen={showPurgeConfirmClose}
+  title="Discard Backup Password?"
+  message="You have entered a backup encryption password. Are you sure you want to cancel without purging?"
+  confirmText="Discard & Cancel"
+  cancelText="Keep Editing"
+  on:confirm={forceClosePurgeModal}
+  on:cancel={() => (showPurgeConfirmClose = false)}
+/>
 
 <style>
   .settings-page {

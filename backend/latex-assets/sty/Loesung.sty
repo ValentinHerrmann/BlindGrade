@@ -136,7 +136,8 @@ escapeinside={(*@}{@*)}
 }
 
 \newcommand{\multi}{\item[$\circ$]}
-\newcommand{\Lmulti}{
+\newcommand{\Lmulti}{%
+	\ifcsname TaskScore\endcsname\else\gdef\TaskScore{0}\fi%
 	\ifthenelse
 	{\boolean{Antworten}}
 	{\xdef\TaskScore{\fpeval{\TaskScore + 1}}  \color{\LFarbe}\item[X]\color{black}}

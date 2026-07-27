@@ -20,10 +20,12 @@
   } from "$lib/db/dbEncryption";
   import { packProject } from "$lib/archive/packer";
   import { compileLatex } from "$lib/latex/compiler";
+  import { formatExerciseLatex } from "$lib/latex/scoreParser";
   import { api } from "$lib/api/client";
   import { sessionStore } from "$lib/stores/session";
   import { storagePolicyStore } from "$lib/stores/storagePolicy";
   import { get } from "svelte/store";
+  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
 
   $: examId = $page.params.id || "";
 
@@ -311,10 +313,11 @@
         URL.revokeObjectURL(url);
       } else {
         const exerciseInputs = exercises
-          .map(
-            (ex, idx) =>
-              ex.latexBody ||
-              `\\begin{Aufgabe}{${ex.name || `Aufgabe ${idx + 1}`}}\\end{Aufgabe}`,
+          .map((ex, idx) =>
+            formatExerciseLatex(
+              ex.latexBody,
+              ex.name || `Aufgabe ${idx + 1}`,
+            ),
           )
           .join("\n\n");
 
@@ -384,10 +387,42 @@ ${exerciseInputs}
   let editInfoText = "";
   let editRetentionUntil = "";
 
+  let initialMetadata = {
+    title: "",
+    testart: "",
+    klasse: "",
+    datum: "",
+    nr: "",
+    fach: "",
+    lehrernachname: "",
+    infoText: "",
+    retentionUntil: "",
+  };
+  let showMetadataConfirm = false;
+
+  $: isMetadataDirty =
+    isEditingMetadata &&
+    (editTitle !== initialMetadata.title ||
+      editTestart !== initialMetadata.testart ||
+      editKlasse !== initialMetadata.klasse ||
+      editDatum !== initialMetadata.datum ||
+      editNr !== initialMetadata.nr ||
+      editFach !== initialMetadata.fach ||
+      editLehrernachname !== initialMetadata.lehrernachname ||
+      editInfoText !== initialMetadata.infoText ||
+      editRetentionUntil !== initialMetadata.retentionUntil);
+
   let isLibraryModalOpen = false;
   let libraryExercises: ExerciseRecord[] = [];
   let selectedLibraryIds: string[] = [];
+  let initialSelectedLibraryIds: string[] = [];
+  let showLibraryConfirm = false;
   let librarySearch = "";
+
+  $: isLibraryDirty =
+    isLibraryModalOpen &&
+    (selectedLibraryIds.length !== initialSelectedLibraryIds.length ||
+      selectedLibraryIds.some((id, i) => id !== initialSelectedLibraryIds[i]));
 
   function openMetadataEditor() {
     if (!exam) return;
@@ -399,8 +434,34 @@ ${exerciseInputs}
     editFach = exam.fach || "Informatik";
     editLehrernachname = exam.lehrernachname || "";
     editInfoText = exam.infoText || "";
-    editRetentionUntil = exam.retentionUntil;
+    editRetentionUntil = exam.retentionUntil || "";
+
+    initialMetadata = {
+      title: editTitle,
+      testart: editTestart,
+      klasse: editKlasse,
+      datum: editDatum,
+      nr: editNr,
+      fach: editFach,
+      lehrernachname: editLehrernachname,
+      infoText: editInfoText,
+      retentionUntil: editRetentionUntil,
+    };
+    showMetadataConfirm = false;
     isEditingMetadata = true;
+  }
+
+  function requestCancelMetadata() {
+    if (isMetadataDirty) {
+      showMetadataConfirm = true;
+    } else {
+      forceCancelMetadata();
+    }
+  }
+
+  function forceCancelMetadata() {
+    showMetadataConfirm = false;
+    isEditingMetadata = false;
   }
 
   async function handleSaveMetadata() {
@@ -432,7 +493,7 @@ ${exerciseInputs}
       const key = get(sessionStore).sessionKey;
       await saveExamEncrypted(exam, key);
 
-      isEditingMetadata = false;
+      forceCancelMetadata();
       alert("Exam details updated successfully.");
     } catch (err: any) {
       alert(`Failed to save exam details: ${err.message}`);
@@ -461,10 +522,25 @@ ${exerciseInputs}
         libraryExercises = await loadExercisesEncrypted(key);
       }
       selectedLibraryIds = exercises.map((e) => e.id);
+      initialSelectedLibraryIds = [...selectedLibraryIds];
+      showLibraryConfirm = false;
       isLibraryModalOpen = true;
     } catch (err) {
       console.error("Failed to load library exercises:", err);
     }
+  }
+
+  function requestCloseLibraryModal() {
+    if (isLibraryDirty) {
+      showLibraryConfirm = true;
+    } else {
+      forceCloseLibraryModal();
+    }
+  }
+
+  function forceCloseLibraryModal() {
+    showLibraryConfirm = false;
+    isLibraryModalOpen = false;
   }
 
   function moveExerciseOrder(index: number, direction: "up" | "down") {
@@ -618,7 +694,7 @@ ${exerciseInputs}
         <div class="editor-actions">
           <button
             class="cancel-btn"
-            on:click={() => (isEditingMetadata = false)}>Cancel</button
+            on:click={requestCancelMetadata}>Cancel</button
           >
           <button class="save-btn" on:click={handleSaveMetadata}
             >Save Changes</button
@@ -626,6 +702,16 @@ ${exerciseInputs}
         </div>
       </div>
     {/if}
+
+<ConfirmDialog
+  isOpen={showMetadataConfirm}
+  title="Discard Metadata Changes?"
+  message="You have unsaved changes in metadata fields. Are you sure you want to discard them?"
+  confirmText="Discard Changes"
+  cancelText="Keep Editing"
+  on:confirm={forceCancelMetadata}
+  on:cancel={() => (showMetadataConfirm = false)}
+/>
 
     {#if exportSuccess}
       <div class="success-banner">
@@ -748,13 +834,13 @@ ${exerciseInputs}
     class="modal-backdrop"
     role="button"
     tabindex="-1"
-    on:click|self={() => (isLibraryModalOpen = false)}
-    on:keydown|self={(e) => e.key === "Escape" && (isLibraryModalOpen = false)}
+    on:click|self={requestCloseLibraryModal}
+    on:keydown|self={(e) => e.key === "Escape" && requestCloseLibraryModal()}
   >
     <div class="modal-content">
       <div class="modal-header">
         <h3>Link Exercises from Library</h3>
-        <button class="close-btn" on:click={() => (isLibraryModalOpen = false)}
+        <button class="close-btn" on:click={requestCloseLibraryModal}
           >✕</button
         >
       </div>
@@ -794,7 +880,7 @@ ${exerciseInputs}
       </div>
 
       <div class="modal-footer">
-        <button class="cancel-btn" on:click={() => (isLibraryModalOpen = false)}
+        <button class="cancel-btn" on:click={requestCloseLibraryModal}
           >Cancel</button
         >
         <button class="save-btn" on:click={applyLibrarySelection}
@@ -804,6 +890,16 @@ ${exerciseInputs}
     </div>
   </div>
 {/if}
+
+<ConfirmDialog
+  isOpen={showLibraryConfirm}
+  title="Discard Exercise Selections?"
+  message="You have unsaved changes in your selected exercises. Are you sure you want to exit without applying?"
+  confirmText="Discard Changes"
+  cancelText="Keep Editing"
+  on:confirm={forceCloseLibraryModal}
+  on:cancel={() => (showLibraryConfirm = false)}
+/>
 
 <style>
   .exam-detail-page {

@@ -10,6 +10,10 @@
   import { syncLocalDataToServer } from "$lib/services/migrationService";
   import { get } from "svelte/store";
   import LatexEditor from "$lib/components/LatexEditor.svelte";
+  import LatexViewer from "$lib/components/LatexViewer.svelte";
+  import { highlightLatexToHtml } from "$lib/latex/highlighter";
+  import ExerciseEditorModal from "$lib/components/ExerciseEditorModal.svelte";
+  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import { diffLines, diffWords } from "diff";
 
   let exercises: ExerciseRecord[] = [];
@@ -20,15 +24,11 @@
   let isLocalFallback = false;
   let isSyncingExercises = false;
 
-  // Editor modal state
+  // Shared Editor modal state
   let isEditorOpen = false;
-  let editingId: string | null = null;
+  let editingExercise: ExerciseRecord | null = null;
   let isCreatingVersion = false;
   let versionBaseEx: ExerciseRecord | null = null;
-  let editorName = "";
-  let editorTopicTag = "_General";
-  let editorVariantKey = "";
-  let editorLatexBody = "";
 
   // Delete modal state
   let isDeleteModalOpen = false;
@@ -71,6 +71,7 @@
     name: string;
     topicTag: string;
     maxPoints: number;
+    minPoints: number;
     variants: Map<string, VariantMember[]>;
     allMembers: VariantMember[];
   }
@@ -92,7 +93,6 @@
 
       const name = currentMembers[0]?.name || "Untitled";
       const topicTag = currentMembers[0]?.topicTag || "_General";
-      const maxPoints = currentMembers[0]?.maxPoints || 0;
 
       const variants = new Map<string, VariantMember[]>();
       for (const ex of currentMembers) {
@@ -123,7 +123,11 @@
         allMembers.push(...vMembers);
       }
 
-      groups.push({ groupId, name, topicTag, maxPoints, variants: sortedVariants, allMembers });
+      const scores = allMembers.map((m) => parseExerciseScore(m.ex.latexBody || "") || m.ex.maxPoints || 0);
+      const maxPoints = scores.length > 0 ? Math.max(...scores) : 0;
+      const minPoints = scores.length > 0 ? Math.min(...scores) : 0;
+
+      groups.push({ groupId, name, topicTag, maxPoints, minPoints, variants: sortedVariants, allMembers });
     }
 
     groups.sort((a, b) => a.name.localeCompare(b.name));
@@ -480,186 +484,28 @@
   }
 
   function openCreateModal() {
-    editingId = null;
+    editingExercise = null;
     isCreatingVersion = false;
     versionBaseEx = null;
-    editorName = "New_Exercise";
-    editorTopicTag = "_General";
-    editorVariantKey = "";
-    editorLatexBody = `\\begin{Aufgabe}{Neue Aufgabe}
-Frage hier eingeben... \\BE
-\\end{Aufgabe}`;
-    if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
-    previewPdfUrl = null;
     isEditorOpen = true;
   }
 
   function openEditModal(ex: ExerciseRecord) {
-    editingId = ex.id;
+    editingExercise = ex;
     isCreatingVersion = false;
     versionBaseEx = null;
-    editorName = ex.name || "Untitled";
-    editorTopicTag = ex.topicTag || "_General";
-    editorVariantKey = ex.variantKey || "";
-    editorLatexBody = ex.latexBody || "";
-    if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
-    previewPdfUrl = null;
     isEditorOpen = true;
   }
 
   function openNewVersionModal(ex: ExerciseRecord) {
-    editingId = null;
+    editingExercise = null;
     isCreatingVersion = true;
     versionBaseEx = ex;
-    editorName = ex.name || "Untitled";
-    editorTopicTag = ex.topicTag || "_General";
-    editorVariantKey = ex.variantKey || "";
-    editorLatexBody = ex.latexBody || "";
-    if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
-    previewPdfUrl = null;
     isEditorOpen = true;
   }
 
-  function closeEditor() {
-    isEditorOpen = false;
-    isCreatingVersion = false;
-    versionBaseEx = null;
-    if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
-    previewPdfUrl = null;
-  }
-
-  async function handlePreviewExercise() {
-    isPreviewLoading = true;
-    try {
-      const fullTex = `\\documentclass[a4paper]{article}
-\\usepackage[sans,punkte]{sty/Schulaufgabe}
-\\usepackage{bbding}
-\\usepackage{pifont}
-\\usepackage{fontspec}
-\\usepackage{framed}
-\\usepackage{enumitem}
-\\usetikzlibrary{shapes.geometric, arrows}
-\\usepackage{sty/tikz-uml}
-\\neverindent
-\\WarningsOff
-\\begin{document}
-\\Testart{Vorschau}
-\\Klasse{10a}
-\\Datum{Vorschau}
-\\Nr{1}
-
-${editorLatexBody}
-
-\\end{document}`;
-
-      const pdfBuffer = await api.postJsonForBinary("/compile/latex", {
-        latex: fullTex,
-      });
-      const blob = new Blob([pdfBuffer], { type: "application/pdf" });
-      if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
-      previewPdfUrl = URL.createObjectURL(blob);
-    } catch (err: any) {
-      alert(`Preview failed: ${err.message || "Unknown compilation error"}`);
-    } finally {
-      isPreviewLoading = false;
-    }
-  }
-
-  async function handleSaveExercise() {
-    if (!editorName.trim()) {
-      alert("Exercise name is required.");
-      return;
-    }
-
-    if (isCreatingVersion && versionBaseEx) {
-      try {
-        if ($storagePolicyStore === "server-synced") {
-          await api.post(`/exercises/${versionBaseEx.id}/new-version`, {
-            name: editorName,
-            topic_tag: editorTopicTag,
-            latex_body: editorLatexBody,
-          });
-        } else {
-          const groupId = versionBaseEx.exerciseGroupId || crypto.randomUUID();
-          if (!versionBaseEx.exerciseGroupId) {
-            versionBaseEx.exerciseGroupId = groupId;
-            await db.exercises.put(versionBaseEx);
-          }
-          const newRecord: ExerciseRecord = {
-            ...versionBaseEx,
-            id: crypto.randomUUID(),
-            name: editorName,
-            topicTag: editorTopicTag,
-            latexBody: editorLatexBody,
-            maxPoints: parseExerciseScore(editorLatexBody),
-            version: (versionBaseEx.version || 1) + 1,
-            exerciseGroupId: groupId,
-            variantKey: editorVariantKey.trim() || undefined,
-            isCurrent: true,
-            updatedAt: new Date().toISOString(),
-          };
-          await db.exercises.put({ ...versionBaseEx, isCurrent: false });
-          await db.exercises.put(newRecord);
-        }
-
-        await loadExercises();
-        closeEditor();
-        alert(`Created new version v${(versionBaseEx.version || 1) + 1}.`);
-      } catch (err: any) {
-        alert(`Failed to create new version: ${err.message}`);
-      }
-      return;
-    }
-
-    const computedScore = parseExerciseScore(editorLatexBody);
-    const id = editingId || crypto.randomUUID();
-
-    const record: ExerciseRecord = {
-      id,
-      teacherId: $sessionStore.email || "local-teacher",
-      name: editorName,
-      topicTag: editorTopicTag,
-      latexBody: editorLatexBody,
-      maxPoints: computedScore,
-      version: (exercises.find((e) => e.id === id)?.version || 0) + 1,
-      questionType: "free_text",
-      penalty: 0,
-      variantKey: editorVariantKey.trim() || undefined,
-      updatedAt: new Date().toISOString(),
-    };
-
-    try {
-      const key = get(sessionStore).sessionKey;
-      await saveExerciseEncrypted(record, key);
-
-      if ($storagePolicyStore === "server-synced") {
-        try {
-          if (editingId) {
-            await api.patch(`/exercises/${id}`, {
-              name: record.name,
-              topic_tag: record.topicTag,
-              latex_body: record.latexBody,
-              variant_key: record.variantKey || null,
-            });
-          } else {
-            await api.post("/exercises", {
-              id: record.id,
-              name: record.name,
-              topic_tag: record.topicTag,
-              latex_body: record.latexBody,
-              variant_key: record.variantKey || null,
-            });
-          }
-        } catch (apiErr) {
-          console.warn("Failed to sync exercise to server:", apiErr);
-        }
-      }
-
-      await loadExercises();
-      closeEditor();
-    } catch (err: any) {
-      alert(`Failed to save exercise: ${err.message}`);
-    }
+  function handleExerciseSaved() {
+    loadExercises();
   }
 
   // Variant modal state
@@ -669,6 +515,18 @@ ${editorLatexBody}
   let variantName = "";
   let variantTopicTag = "_Vererbung";
   let variantLatexBody = "";
+
+  let initialVariantName = "";
+  let initialVariantKey = "";
+  let initialVariantTopicTag = "";
+  let initialVariantLatexBody = "";
+  let showVariantConfirmClose = false;
+
+  $: isVariantDirty =
+    variantName !== initialVariantName ||
+    variantKey !== initialVariantKey ||
+    variantTopicTag !== initialVariantTopicTag ||
+    variantLatexBody !== initialVariantLatexBody;
 
   async function openDeleteModal(ex: ExerciseRecord) {
     deletingExercise = ex;
@@ -774,7 +632,26 @@ ${editorLatexBody}
     variantKey = "Moebel";
     variantTopicTag = ex.topicTag || "_General";
     variantLatexBody = ex.latexBody || "";
+
+    initialVariantName = variantName;
+    initialVariantKey = variantKey;
+    initialVariantTopicTag = variantTopicTag;
+    initialVariantLatexBody = variantLatexBody;
+    showVariantConfirmClose = false;
     isVariantModalOpen = true;
+  }
+
+  function requestCloseVariantModal() {
+    if (isVariantDirty) {
+      showVariantConfirmClose = true;
+    } else {
+      forceCloseVariantModal();
+    }
+  }
+
+  function forceCloseVariantModal() {
+    showVariantConfirmClose = false;
+    isVariantModalOpen = false;
   }
 
   async function handleSaveVariant() {
@@ -816,7 +693,7 @@ ${editorLatexBody}
         await db.exercises.put(variantRecord);
       }
 
-      isVariantModalOpen = false;
+      forceCloseVariantModal();
       await loadExercises();
       alert(`New variant "${variantKey}" created.`);
     } catch (err: any) {
@@ -918,7 +795,11 @@ ${editorLatexBody}
                 {#if group.topicTag}
                   <span class="topic-badge">{group.topicTag}</span>
                 {/if}
-                <span class="score-badge">{group.maxPoints} Pkt</span>
+                <span class="score-badge">
+                  {group.variants.size > 1 && group.minPoints !== group.maxPoints
+                    ? `${group.minPoints}-${group.maxPoints} Pkt`
+                    : `${group.maxPoints} Pkt`}
+                </span>
                 <span class="variant-count-badge">{variantCount} variant{variantCount !== 1 ? 's' : ''}</span>
               </div>
             </div>
@@ -963,7 +844,7 @@ ${editorLatexBody}
                       </div>
 
                       <div class="snippet-preview">
-                        <code>{(member.ex.latexBody || "").slice(0, 150)}...</code>
+                        <LatexViewer code={(member.ex.latexBody || "").slice(0, 150) + "..."} snippet={true} />
                       </div>
 
                       <div class="member-actions">
@@ -1060,13 +941,13 @@ ${editorLatexBody}
     class="modal-backdrop"
     role="button"
     tabindex="-1"
-    on:click|self={() => (isVariantModalOpen = false)}
-    on:keydown|self={(e) => e.key === "Escape" && (isVariantModalOpen = false)}
+    on:click|self={requestCloseVariantModal}
+    on:keydown|self={(e) => e.key === "Escape" && requestCloseVariantModal()}
   >
     <div class="modal-content">
       <div class="modal-header">
         <h3>Create Parallel Exercise Variant</h3>
-        <button class="close-btn" on:click={() => (isVariantModalOpen = false)}
+        <button class="close-btn" on:click={requestCloseVariantModal}
           >✕</button
         >
       </div>
@@ -1120,7 +1001,7 @@ ${editorLatexBody}
       </div>
 
       <div class="modal-footer">
-        <button class="cancel-btn" on:click={() => (isVariantModalOpen = false)}
+        <button class="cancel-btn" on:click={requestCloseVariantModal}
           >Cancel</button
         >
         <button class="save-btn" on:click={handleSaveVariant}
@@ -1131,117 +1012,24 @@ ${editorLatexBody}
   </div>
 {/if}
 
-{#if isEditorOpen}
-  <div
-    class="modal-backdrop"
-    role="button"
-    tabindex="-1"
-    on:click|self={closeEditor}
-    on:keydown|self={(e) => e.key === "Escape" && closeEditor()}
-  >
-    <div class="modal-content">
-      <div class="modal-header">
-        <h3>
-          {isCreatingVersion
-            ? `New Version: ${editorName}`
-            : editingId
-              ? `Edit Exercise: ${editorName}`
-              : "Create New Exercise"}
-        </h3>
-        <button class="close-btn" on:click={closeEditor}>✕</button>
-      </div>
+<ConfirmDialog
+  isOpen={showVariantConfirmClose}
+  title="Discard Variant Changes?"
+  message="You have unsaved changes in this variant form. Discarding will lose your changes."
+  confirmText="Discard Changes"
+  cancelText="Keep Editing"
+  on:confirm={forceCloseVariantModal}
+  on:cancel={() => (showVariantConfirmClose = false)}
+/>
 
-      {#if isCreatingVersion}
-        <div class="live-notice">
-          ℹ️ Creating new version v{(versionBaseEx?.version || 1) + 1}. The previous version will be preserved.
-        </div>
-      {:else if editingId}
-        <div class="live-notice">
-          ℹ️ Editing this exercise will live-update all exams that reference it.
-        </div>
-      {/if}
-
-      <div class="modal-body">
-        <div class="form-grid">
-          <div class="form-group">
-            <label for="editorName">Exercise Name</label>
-            <input
-              id="editorName"
-              type="text"
-              bind:value={editorName}
-              required
-            />
-          </div>
-
-          <div class="form-group">
-            <label for="editorTopic">Topic Tag</label>
-            <input
-              id="editorTopic"
-              type="text"
-              bind:value={editorTopicTag}
-              placeholder="_Vererbung"
-              required
-            />
-          </div>
-
-          <div class="form-group">
-            <label for="editorVariantKey">Variant Key (optional)</label>
-            <input
-              id="editorVariantKey"
-              type="text"
-              bind:value={editorVariantKey}
-              placeholder="e.g. Moebel, Fahrzeug, Wildtier (leave empty for default)"
-            />
-          </div>
-        </div>
-
-        <div class="form-group">
-          <div class="label-row">
-            <label for="editorBody"
-              >LaTeX Body (\\begin&#123;Aufgabe&#125;...)</label
-            >
-            <span class="score-indicator">
-              Auto-Score: <strong
-                >{parseExerciseScore(editorLatexBody)} Pkt</strong
-              >
-            </span>
-          </div>
-          <LatexEditor bind:value={editorLatexBody} rows={10} />
-        </div>
-
-        <div class="editor-actions-row">
-          <button
-            type="button"
-            class="preview-btn"
-            on:click={handlePreviewExercise}
-            disabled={isPreviewLoading}
-          >
-            {isPreviewLoading ? "Compiling Preview..." : "🔍 Live Preview PDF"}
-          </button>
-        </div>
-
-        {#if previewPdfUrl}
-          <div class="preview-box">
-            <h4>Single Exercise PDF Preview</h4>
-            <iframe
-              src={previewPdfUrl}
-              title="Exercise Preview"
-              width="100%"
-              height="350px"
-            ></iframe>
-          </div>
-        {/if}
-      </div>
-
-      <div class="modal-footer">
-        <button class="cancel-btn" on:click={closeEditor}>Cancel</button>
-        <button class="save-btn" on:click={handleSaveExercise}
-          >{isCreatingVersion ? "Save New Version" : "Save Exercise"}</button
-        >
-      </div>
-    </div>
-  </div>
-{/if}
+<ExerciseEditorModal
+  isOpen={isEditorOpen}
+  editingExercise={editingExercise}
+  isCreatingVersion={isCreatingVersion}
+  versionBaseEx={versionBaseEx}
+  on:close={() => (isEditorOpen = false)}
+  on:save={handleExerciseSaved}
+/>
 
 {#if isDeleteModalOpen && deletingExercise}
   <div
@@ -1342,10 +1130,10 @@ ${editorLatexBody}
                   <span class="line-content">
                     {#if line.tokens}
                       {#each line.tokens as token}
-                        <span class="word-token {token.type}">{token.text}</span>
+                        <span class="word-token {token.type}">{@html highlightLatexToHtml(token.text)}</span>
                       {/each}
                     {:else}
-                      {line.text}
+                      {@html highlightLatexToHtml(line.text || "")}
                     {/if}
                   </span>
                 </div>
@@ -1362,10 +1150,10 @@ ${editorLatexBody}
                   <span class="line-content">
                     {#if line.tokens}
                       {#each line.tokens as token}
-                        <span class="word-token {token.type}">{token.text}</span>
+                        <span class="word-token {token.type}">{@html highlightLatexToHtml(token.text)}</span>
                       {/each}
                     {:else}
-                      {line.text}
+                      {@html highlightLatexToHtml(line.text || "")}
                     {/if}
                   </span>
                 </div>

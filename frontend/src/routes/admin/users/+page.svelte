@@ -17,6 +17,12 @@
         $isUnlocked &&
         $sessionStore.role === "admin";
 
+    $: {
+        if (email.trim() || password) {
+            sessionStore.setDirty(true);
+        }
+    }
+
     onMount(() => {
         if (!$isUnlocked) {
             window.location.href = "/unlock";
@@ -63,6 +69,7 @@
 
             successMsg = `Created ${created.role} account for ${created.email}.`;
             password = "";
+            sessionStore.setDirty(false);
         } catch (err: unknown) {
             if (err instanceof ApiError) {
                 if (err.status === 403) {

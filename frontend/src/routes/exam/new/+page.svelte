@@ -6,9 +6,11 @@
   import type { ExerciseRecord } from "$lib/db/schema";
   import { loadExercisesEncrypted, saveExerciseEncrypted, saveExamEncrypted, encryptExercise } from "$lib/db/dbEncryption";
   import { api } from "$lib/api/client";
-  import { parseExerciseScore } from "$lib/latex/scoreParser";
+  import { parseExerciseScore, formatExerciseLatex } from "$lib/latex/scoreParser";
   import { get } from "svelte/store";
   import LatexEditor from "$lib/components/LatexEditor.svelte";
+  import LatexViewer from "$lib/components/LatexViewer.svelte";
+  import ExerciseEditorModal from "$lib/components/ExerciseEditorModal.svelte";
 
   // Metadata
   let title = "";
@@ -30,6 +32,47 @@
   let selectedTopicFilter: string = "ALL";
   let searchQuery: string = "";
   let activeTab: "library" | "custom" = "library";
+
+  // Quick exercise editor state
+  let isQuickEditorOpen = false;
+  let editingExerciseForQuickEdit: ExerciseRecord | null = null;
+
+  function openQuickEdit(ex: ExerciseRecord) {
+    editingExerciseForQuickEdit = ex;
+    isQuickEditorOpen = true;
+  }
+
+  async function handleQuickEditSaved() {
+    await loadLibrary();
+  }
+
+  $: {
+    if (title.trim() || selectedLibraryIds.length > 0) {
+      sessionStore.setDirty(true);
+    }
+  }
+
+  // Exercise grouping & preview modal state
+  interface VariantMember {
+    ex: ExerciseRecord;
+    variantLabel: string;
+    version: number;
+    isCurrent: boolean;
+  }
+
+  interface ExerciseGroup {
+    groupId: string;
+    name: string;
+    topicTag: string;
+    maxPoints: number;
+    minPoints: number;
+    variants: Map<string, VariantMember[]>;
+    allMembers: VariantMember[];
+  }
+
+  let activeVariantPerGroup: Record<string, string> = {};
+  let isPreviewModalOpen = false;
+  let previewModalEx: ExerciseRecord | null = null;
 
   // Inline custom exercise form
   let customName = "Custom_Exercise";
@@ -61,22 +104,92 @@ Frage hier eingeben... \\BE
       !q ||
       (ex.name && ex.name.toLowerCase().includes(q)) ||
       (ex.topicTag && ex.topicTag.toLowerCase().includes(q)) ||
+      (ex.variantKey && ex.variantKey.toLowerCase().includes(q)) ||
       (ex.latexBody && ex.latexBody.toLowerCase().includes(q));
     return matchesTopic && matchesSearch;
   });
+
+  $: filteredGroups = groupExercises(filteredLibrary);
+  $: totalVariantsCount = filteredGroups.reduce((acc, g) => acc + g.variants.size, 0);
 
   $: selectedExercises = selectedLibraryIds
     .map((id) => libraryExercises.find((e) => e.id === id))
     .filter((e): e is ExerciseRecord => Boolean(e));
 
   $: totalPoints = selectedExercises.reduce(
-    (sum, ex) => sum + parseExerciseScore(ex.latexBody || ""),
+    (sum, ex) => sum + (parseExerciseScore(ex.latexBody || "") || ex.maxPoints || 0),
     0,
   );
 
   onMount(() => {
     loadLibrary();
   });
+
+  function groupExercises(exs: ExerciseRecord[]): ExerciseGroup[] {
+    const buckets = new Map<string, ExerciseRecord[]>();
+
+    for (const ex of exs) {
+      const key = ex.exerciseGroupId || `name:${ex.name || "Untitled"}`;
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key)!.push(ex);
+    }
+
+    const groups: ExerciseGroup[] = [];
+
+    for (const [groupId, members] of buckets) {
+      const currentMembers = members.filter((m) => m.isCurrent !== false);
+      if (currentMembers.length === 0) continue;
+
+      const name = currentMembers[0]?.name || "Untitled";
+      const topicTag = currentMembers[0]?.topicTag || "_General";
+
+      const variants = new Map<string, VariantMember[]>();
+      for (const ex of currentMembers) {
+        const vKey = ex.variantKey || "_General";
+        if (!variants.has(vKey)) variants.set(vKey, []);
+        variants.get(vKey)!.push({
+          ex,
+          variantLabel: vKey,
+          version: ex.version || 1,
+          isCurrent: ex.isCurrent !== false,
+        });
+      }
+
+      const sortedVariants = new Map<string, VariantMember[]>();
+      const keys = [...variants.keys()].sort((a, b) => {
+        if (a === "_General") return -1;
+        if (b === "_General") return 1;
+        return a.localeCompare(b);
+      });
+      for (const k of keys) sortedVariants.set(k, variants.get(k)!);
+
+      for (const [, vMembers] of sortedVariants) {
+        vMembers.sort((a, b) => b.version - a.version);
+      }
+
+      const allMembers: VariantMember[] = [];
+      for (const [, vMembers] of sortedVariants) {
+        allMembers.push(...vMembers);
+      }
+
+      const scores = allMembers.map((m) => parseExerciseScore(m.ex.latexBody || "") || m.ex.maxPoints || 0);
+      const maxPoints = scores.length > 0 ? Math.max(...scores) : 0;
+      const minPoints = scores.length > 0 ? Math.min(...scores) : 0;
+
+      groups.push({
+        groupId,
+        name,
+        topicTag,
+        maxPoints,
+        minPoints,
+        variants: sortedVariants,
+        allMembers,
+      });
+    }
+
+    groups.sort((a, b) => a.name.localeCompare(b.name));
+    return groups;
+  }
 
   async function loadLibrary() {
     const key = get(sessionStore).sessionKey;
@@ -92,8 +205,11 @@ Frage hier eingeben... \\BE
             latexBody: e.latex_body,
             maxPoints: e.max_points,
             version: e.version || 1,
-            questionType: "free_text",
-            penalty: 0,
+            questionType: e.question_type || "free_text",
+            penalty: e.penalty || 0,
+            exerciseGroupId: e.exercise_group_id || undefined,
+            variantKey: e.variant_key || undefined,
+            isCurrent: e.is_current,
           }));
           const encryptedExs = await Promise.all(libraryExercises.map(ex => encryptExercise(ex, key)));
           await db.exercises.bulkPut(encryptedExs);
@@ -107,6 +223,33 @@ Frage hier eingeben... \\BE
     } catch (err) {
       console.error("Failed to load exercise library:", err);
     }
+  }
+
+  function setGroupVariant(groupId: string, vKey: string) {
+    activeVariantPerGroup = { ...activeVariantPerGroup, [groupId]: vKey };
+  }
+
+  function openPreviewModal(ex: ExerciseRecord) {
+    previewModalEx = ex;
+    isPreviewModalOpen = true;
+  }
+
+  function closePreviewModal() {
+    isPreviewModalOpen = false;
+    previewModalEx = null;
+  }
+
+  function getCleanSnippet(latexBody: string | undefined, maxLen = 140): string {
+    if (!latexBody) return "No content preview available.";
+    const clean = latexBody
+      .replace(/\\begin\{[^}]+\}/g, "")
+      .replace(/\\end\{[^}]+\}/g, "")
+      .replace(/\\(BE|hBE|qBE|textbf|textit|emph|section|subsection|item|Info|Fach|Klasse|Datum|Nr|Testart|Lehrernachname)/g, "")
+      .replace(/[\{\}]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!clean) return latexBody.slice(0, maxLen) + "...";
+    return clean.length > maxLen ? clean.slice(0, maxLen) + "..." : clean;
   }
 
   function toggleLibrarySelection(id: string) {
@@ -179,8 +322,11 @@ Frage hier eingeben... \\BE
     errorMsg = "";
     try {
       const exerciseInputs = selectedExercises
-        .map(
-          (ex) => ex.latexBody || `\\begin{Aufgabe}{${ex.name}}\\end{Aufgabe}`,
+        .map((ex, idx) =>
+          formatExerciseLatex(
+            ex.latexBody,
+            ex.name || `Aufgabe ${idx + 1}`,
+          ),
         )
         .join("\n\n");
 
@@ -284,6 +430,7 @@ ${exerciseInputs}
         }
       }
 
+      sessionStore.setDirty(false);
       window.location.href = `/exam/${examId}`;
     } catch (err: any) {
       errorMsg = err.message || "Failed to create exam.";
@@ -412,12 +559,18 @@ ${exerciseInputs}
 
       {#if activeTab === "library"}
         <div class="filter-row">
-          <input
-            type="text"
-            placeholder="Search exercise library..."
-            bind:value={searchQuery}
-            class="search-input"
-          />
+          <div class="search-metrics-row">
+            <input
+              type="text"
+              placeholder="Search exercise library by name, topic, variant, or LaTeX content..."
+              bind:value={searchQuery}
+              class="search-input"
+            />
+            <span class="library-metrics">
+              {filteredGroups.length} Exercise Groups ({totalVariantsCount} Variants)
+            </span>
+          </div>
+
           <div class="topic-pills">
             <button
               type="button"
@@ -425,43 +578,125 @@ ${exerciseInputs}
               class:active={selectedTopicFilter === "ALL"}
               on:click={() => (selectedTopicFilter = "ALL")}
             >
-              All
+              All ({filteredGroups.length})
             </button>
             {#each availableTopics as topic}
+              {@const groupCount = filteredGroups.filter((g) => g.topicTag === topic).length}
               <button
                 type="button"
                 class="pill"
                 class:active={selectedTopicFilter === topic}
                 on:click={() => (selectedTopicFilter = topic)}
               >
-                {topic}
+                {topic} ({groupCount})
               </button>
             {/each}
           </div>
         </div>
 
-        {#if filteredLibrary.length === 0}
+        {#if filteredGroups.length === 0}
           <div class="empty-hint">
-            No exercises found in library matching filter.
+            No exercise groups found in library matching filter criteria.
           </div>
         {:else}
-          <div class="library-checklist">
-            {#each filteredLibrary as ex}
-              {@const isSelected = selectedLibraryIds.includes(ex.id)}
-              {@const score = parseExerciseScore(ex.latexBody || "")}
-              <div class="library-item" class:selected={isSelected}>
-                <label class="item-label">
-                  <input
-                    type="checkbox"
-                    checked={isSelected}
-                    on:change={() => toggleLibrarySelection(ex.id)}
-                  />
-                  <span class="item-name">{ex.name}</span>
-                  {#if ex.topicTag}
-                    <span class="topic-tag">{ex.topicTag}</span>
+          <div class="compact-exercise-list">
+            {#each filteredGroups as group}
+              {@const activeVKey = activeVariantPerGroup[group.groupId] || Array.from(group.variants.keys())[0] || "_General"}
+              {@const vMembers = group.variants.get(activeVKey) || []}
+              {@const activeMember = vMembers[0]}
+              {@const activeEx = activeMember?.ex}
+              {@const isSelected = activeEx ? selectedLibraryIds.includes(activeEx.id) : false}
+              {@const groupSelectedCount = group.allMembers.filter(m => selectedLibraryIds.includes(m.ex.id)).length}
+              {@const score = activeEx ? (parseExerciseScore(activeEx.latexBody || "") || activeEx.maxPoints || 0) : 0}
+
+              <div class="compact-group-row" class:row-selected={groupSelectedCount > 0}>
+                <!-- Selection Checkbox -->
+                <div class="row-checkbox-col">
+                  {#if activeEx}
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      on:change={() => toggleLibrarySelection(activeEx.id)}
+                      title={isSelected ? "Remove from exam" : "Add to exam"}
+                    />
                   {/if}
-                </label>
-                <span class="score-badge">{score} Pkt</span>
+                </div>
+
+                <!-- Main Info: Title, Topic, Variants -->
+                <div class="row-main-col">
+                  <div class="row-title-line">
+                    <span class="group-title-text">{group.name}</span>
+                    
+                    {#if group.topicTag}
+                      <span class="compact-topic-tag">{group.topicTag}</span>
+                    {/if}
+
+                    {#if groupSelectedCount > 0}
+                      <span class="selected-indicator-badge">
+                        ✓ {groupSelectedCount} in exam
+                      </span>
+                    {/if}
+                  </div>
+
+                  <!-- Inline Variant Selector Pills (if multiple variants exist) -->
+                  {#if group.variants.size > 1}
+                    <div class="compact-variant-bar">
+                      {#each group.variants.keys() as vKey}
+                        {@const members = group.variants.get(vKey) || []}
+                        {@const hasSelected = members.some(m => selectedLibraryIds.includes(m.ex.id))}
+                        <button
+                          type="button"
+                          class="compact-variant-pill"
+                          class:active={vKey === activeVKey}
+                          class:has-selected={hasSelected}
+                          on:click={() => setGroupVariant(group.groupId, vKey)}
+                          title={`Switch to variant "${vKey}"`}
+                        >
+                          {#if hasSelected}
+                            <span class="v-check">✓</span>
+                          {/if}
+                          <span>{vKey}</span>
+                        </button>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+
+                <!-- Right Actions: Points, Quick Edit & Preview Button -->
+                <div class="row-actions-col">
+                  <span class="compact-score-badge">
+                    {group.variants.size > 1 && group.minPoints !== group.maxPoints
+                      ? `${group.minPoints}-${group.maxPoints} Pkt`
+                      : `${score} Pkt`}
+                  </span>
+
+                  {#if activeEx}
+                    <button
+                      type="button"
+                      class="icon-edit-btn"
+                      title="Quick Edit Exercise Globally"
+                      on:click={() => openQuickEdit(activeEx)}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                      </svg>
+                      <span class="preview-text">Quick Edit</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="icon-preview-btn"
+                      title="Quick Preview LaTeX Code"
+                      on:click={() => openPreviewModal(activeEx)}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                        <circle cx="12" cy="12" r="3"></circle>
+                      </svg>
+                      <span class="preview-text">Preview</span>
+                    </button>
+                  {/if}
+                </div>
               </div>
             {/each}
           </div>
@@ -538,7 +773,7 @@ ${exerciseInputs}
       {:else}
         <div class="selected-list">
           {#each selectedExercises as ex, idx}
-            {@const score = parseExerciseScore(ex.latexBody || "")}
+            {@const score = parseExerciseScore(ex.latexBody || "") || ex.maxPoints || 0}
             <div class="selected-item">
               <div class="item-info">
                 <span class="order-num">({idx + 1})</span>
@@ -549,6 +784,14 @@ ${exerciseInputs}
                 <span class="score-badge">{score} Pkt</span>
               </div>
               <div class="order-controls">
+                <button
+                  type="button"
+                  class="edit-item-btn"
+                  title="Quick Edit Exercise Globally"
+                  on:click={() => openQuickEdit(ex)}
+                >
+                  ✏️
+                </button>
                 <button
                   type="button"
                   class="order-btn"
@@ -599,6 +842,97 @@ ${exerciseInputs}
       {isLoading ? "Creating Exam..." : "Save Exam & Continue"}
     </button>
   </form>
+
+  <!-- Exercise Preview Modal Drawer -->
+  {#if isPreviewModalOpen && previewModalEx}
+    {@const modalScore = parseExerciseScore(previewModalEx.latexBody || "") || previewModalEx.maxPoints || 0}
+    {@const isModalSelected = selectedLibraryIds.includes(previewModalEx.id)}
+    <div
+      class="modal-backdrop"
+      role="button"
+      tabindex="0"
+      on:click={closePreviewModal}
+      on:keydown={(e) => e.key === "Escape" && closePreviewModal()}
+    >
+      <div
+        class="modal-drawer"
+        role="dialog"
+        aria-modal="true"
+        on:click|stopPropagation
+      >
+        <div class="modal-header">
+          <div>
+            <div class="modal-title-row">
+              <h3>{previewModalEx.name}</h3>
+              {#if previewModalEx.variantKey && previewModalEx.variantKey !== "_General"}
+                <span class="variant-key-tag">{previewModalEx.variantKey}</span>
+              {/if}
+            </div>
+            <div class="modal-meta-pills">
+              {#if previewModalEx.topicTag}
+                <span class="topic-badge">{previewModalEx.topicTag}</span>
+              {/if}
+              <span class="score-badge">{modalScore} Pkt</span>
+              <span class="variant-version-badge"
+                >Version {previewModalEx.version}</span
+              >
+              {#if previewModalEx.questionType}
+                <span class="question-type-badge"
+                  >{previewModalEx.questionType}</span
+                >
+              {/if}
+            </div>
+          </div>
+          <button class="modal-close-btn" on:click={closePreviewModal}>✕</button>
+        </div>
+
+        <div class="modal-body">
+          <div class="latex-code-section">
+            <div class="section-label">LaTeX Source Code</div>
+            <LatexViewer code={previewModalEx.latexBody || "\\begin{Aufgabe}{}\n\\end{Aufgabe}"} maxHeight="350px" />
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button
+            type="button"
+            class="modal-select-btn"
+            class:selected={isModalSelected}
+            on:click={() => previewModalEx && toggleLibrarySelection(previewModalEx.id)}
+          >
+            {isModalSelected
+              ? "✓ Selected in Exam (Click to Remove)"
+              : "+ Select for Exam"}
+          </button>
+          <button
+            type="button"
+            class="modal-edit-btn"
+            on:click={() => {
+              const exToEdit = previewModalEx;
+              closePreviewModal();
+              if (exToEdit) openQuickEdit(exToEdit);
+            }}
+          >
+            ✏️ Quick Edit
+          </button>
+          <button
+            type="button"
+            class="modal-cancel-btn"
+            on:click={closePreviewModal}
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <ExerciseEditorModal
+    isOpen={isQuickEditorOpen}
+    editingExercise={editingExerciseForQuickEdit}
+    on:close={() => (isQuickEditorOpen = false)}
+    on:save={handleQuickEditSaved}
+  />
 </div>
 
 <style>
@@ -910,5 +1244,408 @@ ${exerciseInputs}
     padding: 0.75rem;
     border-radius: 6px;
     margin-bottom: 1.5rem;
+  }
+
+  /* Search & Metrics Header */
+  .search-metrics-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .library-metrics {
+    font-size: 0.8rem;
+    color: #94a3b8;
+    white-space: nowrap;
+    font-weight: 500;
+  }
+
+  /* Compact Exercise List */
+  .compact-exercise-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    max-height: 480px;
+    overflow-y: auto;
+    padding-right: 0.35rem;
+  }
+
+  .compact-group-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 0.5rem 0.85rem;
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+
+  .compact-group-row:hover {
+    border-color: #475569;
+    background: #152035;
+  }
+
+  .compact-group-row.row-selected {
+    border-color: #0284c7;
+    background: rgba(2, 132, 199, 0.1);
+  }
+
+  .row-checkbox-col {
+    display: flex;
+    align-items: center;
+  }
+
+  .row-checkbox-col input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: #0284c7;
+  }
+
+  .row-main-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+  }
+
+  .row-title-line {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .group-title-text {
+    font-weight: 600;
+    color: #f8fafc;
+    font-size: 0.92rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .compact-topic-tag {
+    font-size: 0.72rem;
+    background: #334155;
+    color: #cbd5e1;
+    padding: 0.1rem 0.45rem;
+    border-radius: 4px;
+    font-weight: 500;
+  }
+
+  .selected-indicator-badge {
+    font-size: 0.72rem;
+    background: rgba(16, 185, 129, 0.15);
+    border: 1px solid #10b981;
+    color: #34d399;
+    padding: 0.05rem 0.4rem;
+    border-radius: 4px;
+    font-weight: 600;
+  }
+
+  .compact-variant-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    flex-wrap: wrap;
+  }
+
+  .compact-variant-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    background: #1e293b;
+    border: 1px solid #334155;
+    color: #94a3b8;
+    padding: 0.1rem 0.455rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.72rem;
+    font-weight: 500;
+    transition: all 0.15s ease;
+  }
+
+  .compact-variant-pill:hover {
+    border-color: #38bdf8;
+    color: #f8fafc;
+  }
+
+  .compact-variant-pill.active {
+    background: #0284c7;
+    border-color: #38bdf8;
+    color: white;
+    font-weight: 600;
+  }
+
+  .compact-variant-pill.has-selected {
+    border-color: #10b981;
+  }
+
+  .compact-variant-pill.active.has-selected {
+    background: #059669;
+    border-color: #34d399;
+  }
+
+  .v-check {
+    color: #34d399;
+    font-weight: bold;
+    font-size: 0.7rem;
+  }
+
+  .row-actions-col {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    white-space: nowrap;
+  }
+
+  .compact-score-badge {
+    background: #0369a1;
+    color: #e0f2fe;
+    font-size: 0.75rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    font-weight: 600;
+  }
+
+  .icon-preview-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    background: transparent;
+    border: 1px solid #334155;
+    color: #38bdf8;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.15s ease;
+  }
+
+  .icon-preview-btn:hover {
+    background: #1e293b;
+    border-color: #38bdf8;
+  }
+
+  /* Modal Drawer Overlay */
+  .modal-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(3px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    padding: 1rem;
+  }
+
+  .modal-drawer {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    width: 100%;
+    max-width: 700px;
+    max-height: 85vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+    overflow: hidden;
+  }
+
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 1.25rem 1.5rem;
+    border-bottom: 1px solid #334155;
+    background: #0f172a;
+  }
+
+  .modal-title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.4rem;
+  }
+
+  .modal-title-row h3 {
+    margin: 0;
+    color: #f8fafc;
+    font-size: 1.15rem;
+  }
+
+  .modal-meta-pills {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+  }
+
+  .question-type-badge {
+    font-size: 0.75rem;
+    background: #475569;
+    color: #f1f5f9;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    text-transform: uppercase;
+  }
+
+  .modal-close-btn {
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    font-size: 1.25rem;
+    cursor: pointer;
+    padding: 0.25rem 0.5rem;
+    line-height: 1;
+    border-radius: 4px;
+  }
+
+  .modal-close-btn:hover {
+    color: white;
+    background: #334155;
+  }
+
+  .modal-body {
+    padding: 1.25rem 1.5rem;
+    overflow-y: auto;
+    flex: 1;
+  }
+
+  .latex-code-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .section-label {
+    font-size: 0.78rem;
+    color: #94a3b8;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .latex-preview-code {
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 1rem;
+    margin: 0;
+    overflow-x: auto;
+    color: #e2e8f0;
+    font-family: "Fira Code", "Courier New", Courier, monospace;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .modal-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-top: 1px solid #334155;
+    background: #0f172a;
+  }
+
+  .modal-select-btn {
+    background: #0284c7;
+    color: white;
+    border: none;
+    padding: 0.5rem 1.25rem;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+
+  .modal-select-btn:hover {
+    background: #0369a1;
+  }
+
+  .modal-select-btn.selected {
+    background: #16a34a;
+  }
+
+  .modal-select-btn.selected:hover {
+    background: #15803d;
+  }
+
+  .modal-cancel-btn {
+    background: #334155;
+    color: #cbd5e1;
+    border: none;
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+
+  .modal-cancel-btn:hover {
+    background: #475569;
+    color: white;
+  }
+
+  .icon-edit-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    background: #334155;
+    border: 1px solid #475569;
+    color: #f1f5f9;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all 0.15s ease;
+  }
+
+  .icon-edit-btn:hover {
+    background: #475569;
+    border-color: #38bdf8;
+    color: #38bdf8;
+  }
+
+  .edit-item-btn {
+    background: #334155;
+    color: white;
+    border: none;
+    padding: 0.25rem 0.4rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    margin-right: 0.2rem;
+  }
+
+  .edit-item-btn:hover {
+    background: #475569;
+  }
+
+  .modal-edit-btn {
+    background: #334155;
+    color: #38bdf8;
+    border: 1px solid #475569;
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .modal-edit-btn:hover {
+    background: #475569;
   }
 </style>

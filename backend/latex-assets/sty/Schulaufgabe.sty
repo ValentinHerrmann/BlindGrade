@@ -107,6 +107,7 @@
 
 % BE Commands: \xdef globally accumulates the score into \TaskScore
 \newcommand{\BE}{%
+    \ifcsname TaskScore\endcsname\else\gdef\TaskScore{0}\fi%
     \xdef\TaskScore{\fpeval{\TaskScore + 1}}%
     \ifthenelse{
         \boolean{Antworten}
@@ -115,6 +116,7 @@
     }{}%
 }
 \newcommand{\hBE}{%
+    \ifcsname TaskScore\endcsname\else\gdef\TaskScore{0}\fi%
     \xdef\TaskScore{\fpeval{\TaskScore + 0.5}}%
     \ifthenelse{
         \boolean{Antworten}
@@ -123,6 +125,7 @@
     }{}%
 }
 \newcommand{\qBE}{%
+    \ifcsname TaskScore\endcsname\else\gdef\TaskScore{0}\fi%
     \xdef\TaskScore{\fpeval{\TaskScore + 0.25}}%
     \ifthenelse{
         \boolean{Antworten}

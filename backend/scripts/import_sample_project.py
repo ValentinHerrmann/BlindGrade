@@ -39,6 +39,7 @@ def parse_exercise_score(latex_content: str) -> float:
             pass
 
     full = len(re.findall(r"\\BE\b", latex_content))
+    full += len(re.findall(r"\\Lmulti\b", latex_content))
     half = len(re.findall(r"\\hBE\b", latex_content))
     quart = len(re.findall(r"\\qBE\b", latex_content))
 

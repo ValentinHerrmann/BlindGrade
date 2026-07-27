@@ -22,6 +22,32 @@ class CompilationError(Exception):
     """Raised when Tectonic exits non-zero or the process fails."""
 
 
+def _extract_tex_error(stderr_text: str, tmpdir: Path) -> str:
+    """Extract a meaningful TeX error message from stderr or main.log."""
+    log_file = tmpdir / "main.log"
+    error_lines = []
+
+    if log_file.exists():
+        try:
+            log_content = log_file.read_text(encoding="utf-8", errors="replace")
+            for line in log_content.splitlines():
+                line_str = line.strip()
+                if line_str.startswith("!") or " Error:" in line_str or "error:" in line_str.lower():
+                    error_lines.append(line_str)
+        except Exception:
+            pass
+
+    if error_lines:
+        return " | ".join(error_lines[:5])
+
+    lines = stderr_text.splitlines()
+    filtered = [l.strip() for l in lines if l.strip() and not l.strip().startswith("warning:")]
+    if filtered:
+        return " ".join(filtered[-5:])
+
+    return stderr_text[:1000].replace("\n", " ")
+
+
 async def compile_latex(
     latex_source: str,
     extra_files: dict[str, str] | None = None,
@@ -32,6 +58,22 @@ async def compile_latex(
 
     Copies sty/ and img/ from ASSETS_DIR into temp working directory.
     """
+    if "\\documentclass" not in latex_source:
+        latex_source = f"""\\documentclass[a4paper]{{article}}
+\\usepackage[sans,punkte]{{sty/Schulaufgabe}}
+\\usepackage{{bbding}}
+\\usepackage{{pifont}}
+\\usepackage{{framed}}
+\\usepackage{{enumitem}}
+\\usetikzlibrary{{shapes.geometric, arrows}}
+\\usepackage{{sty/tikz-uml}}
+\\neverindent
+\\WarningsOff
+\\begin{{document}}
+{latex_source}
+\\end{{document}}
+"""
+
     tmpdir = Path(tempfile.mkdtemp(prefix="blindgrade-latex-"))
     timeout = PREVIEW_TIMEOUT_SECONDS if preview else COMPILE_TIMEOUT_SECONDS
     try:
@@ -82,7 +124,8 @@ async def compile_latex(
                 raise
 
             if proc.returncode != 0:
-                err_snippet = stderr.decode(errors="replace")[:1000]
+                raw_stderr = stderr.decode(errors="replace")
+                err_snippet = _extract_tex_error(raw_stderr, tmpdir)
                 logger.warning(
                     "Tectonic compilation pass %d failed (exit %d). stderr: %s",
                     pass_idx + 1,
@@ -103,6 +146,28 @@ async def compile_latex(
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+def format_exercise_latex(latex_body: str | None, title: str) -> str:
+    """
+    Format exercise LaTeX code ensuring \\begin{Aufgabe}{<title>} and \\end{Aufgabe} tags exist.
+    - If \\begin{Aufgabe} is missing, prepends \\begin{Aufgabe}{<title>}.
+    - If \\end{Aufgabe} is missing, appends \\end{Aufgabe}.
+    """
+    body = latex_body or ""
+    prefix = ""
+    suffix = ""
+
+    if r"\begin{Aufgabe}" not in body:
+        prefix = f"\\begin{{Aufgabe}}{{{title}}}\n"
+
+    if r"\end{Aufgabe}" not in body:
+        if body and not body.endswith("\n"):
+            suffix = "\n\\end{Aufgabe}"
+        else:
+            suffix = "\\end{Aufgabe}"
+
+    return f"{prefix}{body}{suffix}"
+
+
 async def compile_exam_latex(
     exam_model: Any,
     exercises: list[Any],
@@ -116,8 +181,10 @@ async def compile_exam_latex(
 
     for idx, ex in enumerate(exercises):
         filename = f"exercises/ex_{idx + 1}.tex"
-        latex_body = ex.latex_body or f"\\begin{{Aufgabe}}{{{ex.name or f'Aufgabe {idx + 1}'}}}\n\\end{{Aufgabe}}"
-        extra_files[filename] = latex_body
+        ex_name = getattr(ex, "name", None) or (ex.get("name") if isinstance(ex, dict) else None)
+        title = ex_name or f"Aufgabe {idx + 1}"
+        latex_body = getattr(ex, "latex_body", None) if not isinstance(ex, dict) else ex.get("latex_body")
+        extra_files[filename] = format_exercise_latex(latex_body, title)
         exercise_inputs.append(f"\\input{{{filename}}}")
 
     opts = ["sans", "punkte"]
