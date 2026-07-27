@@ -1,6 +1,6 @@
 {
-  "name": "BlindGrade",
-  "short_name": "BlindGrade",
+  "name": "Examance",
+  "short_name": "Examance",
   "description": "Privacy-First Anonymous Exam Management",
   "start_url": "/",
   "display": "standalone",

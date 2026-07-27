@@ -1,12 +1,12 @@
-# BlindGrade Data Flow, Encryption-at-Rest, & Security Architecture
+# Examance Data Flow, Encryption-at-Rest, & Security Architecture
 
-This document describes the privacy-first data storage architecture, client-side encryption lifecycle, session hygiene, and DevTools zero-exposure security model implemented in **BlindGrade**.
+This document describes the privacy-first data storage architecture, client-side encryption lifecycle, session hygiene, and DevTools zero-exposure security model implemented in **Examance**.
 
 ---
 
 ## 1. Overview & Security Invariants
 
-BlindGrade uses a zero-knowledge, client-side encryption-at-rest model designed to prevent unauthorized access to sensitive exam data, student PII, scan images, and grading scores—even when inspecting browser storage via Developer Tools.
+Examance uses a zero-knowledge, client-side encryption-at-rest model designed to prevent unauthorized access to sensitive exam data, student PII, scan images, and grading scores—even when inspecting browser storage via Developer Tools.
 
 ### Core Invariants
 1. **No Unauthenticated DevTools Access**: When a user is locked or logged out, browser DevTools inspection reveals **zero unencrypted text** (no LaTeX preamble/body, exam metadata, answer keys, fallback codes, or raw scores). Storage is either completely purged (`server-synced` mode) or stored as opaque AES-256-GCM binary ciphertexts (`local-only` mode).
@@ -61,7 +61,7 @@ sequenceDiagram
     actor User
     participant Page as SvelteKit App
     participant Memory as JS RAM (sessionStore)
-    participant IDB as IndexedDB (BlindGrade)
+    participant IDB as IndexedDB (Examance)
     participant Server as Backend API
 
     User->>Page: Login (Email & Password)

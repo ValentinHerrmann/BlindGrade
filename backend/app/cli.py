@@ -23,7 +23,7 @@ from app.config import settings  # noqa: F401 — validates config at import
 
 @click.group()
 def cli() -> None:
-    """BlindGrade management commands."""
+    """Examance management commands."""
 
 
 def _raise_schema_hint(exc: Exception) -> None:

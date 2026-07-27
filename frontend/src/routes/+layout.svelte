@@ -34,8 +34,8 @@
     <header class="app-header">
       <div class="brand">
         <a href="/">
-          <img src="/favicon.png" alt="BlindGrade logo" class="brand-logo" />
-          <span>BlindGrade</span>
+          <img src="/favicon.png" alt="Examance logo" class="brand-logo" />
+          <span>Examance</span>
         </a>
       </div>
       <nav class="nav-links">

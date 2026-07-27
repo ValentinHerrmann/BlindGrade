@@ -27,7 +27,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="BlindGrade API",
+        title="Examance API",
         version="0.1.0",
         description="Privacy-first anonymous exam grading backend.",
         docs_url="/api/docs",

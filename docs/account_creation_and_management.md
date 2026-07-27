@@ -1,6 +1,6 @@
 # User & Account Management
 
-Guide for creating and managing teacher and administrator accounts in **BlindGrade**.
+Guide for creating and managing teacher and administrator accounts in **Examance**.
 
 ---
 

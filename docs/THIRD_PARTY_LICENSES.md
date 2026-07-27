@@ -1,6 +1,6 @@
 # Third-Party Dependencies and Subresource Integrity (SRI) Manifest
 
-This document details all third-party software components, licenses, and Subresource Integrity (SRI) hashes used in BlindGrade.
+This document details all third-party software components, licenses, and Subresource Integrity (SRI) hashes used in Examance.
 
 ---
 

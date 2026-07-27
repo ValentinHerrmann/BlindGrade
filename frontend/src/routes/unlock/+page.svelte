@@ -64,8 +64,8 @@
 
 <div class="unlock-container">
   <div class="unlock-card">
-    <img src="/favicon.png" alt="BlindGrade logo" class="unlock-banner-logo" />
-    <h1>BlindGrade</h1>
+    <img src="/favicon.png" alt="Examance logo" class="unlock-banner-logo" />
+    <h1>Examance</h1>
     <p class="subtitle">Privacy-First Anonymous Exam Management</p>
 
     {#if errorMsg}

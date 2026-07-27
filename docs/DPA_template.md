@@ -1,6 +1,6 @@
-# Data Processing Agreement (DPA) Template — BlindGrade
+# Data Processing Agreement (DPA) Template — Examance
 
-This Data Processing Agreement ("DPA") supplements the main terms of service between the **Data Controller** (Educational Institution / School / University) and the **Data Processor** (BlindGrade Hybrid Service Provider) pursuant to Article 28 of the General Data Protection Regulation (GDPR).
+This Data Processing Agreement ("DPA") supplements the main terms of service between the **Data Controller** (Educational Institution / School / University) and the **Data Processor** (Examance Hybrid Service Provider) pursuant to Article 28 of the General Data Protection Regulation (GDPR).
 
 ---
 
