@@ -64,6 +64,7 @@
 
 <div class="unlock-container">
   <div class="unlock-card">
+    <img src="/favicon.png" alt="BlindGrade logo" class="unlock-banner-logo" />
     <h1>BlindGrade</h1>
     <p class="subtitle">Privacy-First Anonymous Exam Management</p>
 
@@ -109,7 +110,10 @@
     display: flex;
     justify-content: center;
     align-items: center;
-    min-height: 100vh;
+    min-height: calc(100vh - 28px);
+    height: 100%;
+    padding: 1.5rem;
+    box-sizing: border-box;
     background-color: #0f172a;
     color: #f8fafc;
     font-family:
@@ -124,10 +128,21 @@
   .unlock-card {
     background: #1e293b;
     border-radius: 12px;
-    padding: 2.5rem;
+    padding: 2rem;
     width: 100%;
     max-width: 440px;
     box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+    box-sizing: border-box;
+  }
+
+  .unlock-banner-logo {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-height: 380px;
+    object-fit: contain;
+    margin: 0 auto 1rem auto;
+    border-radius: 15px;
   }
 
   h1 {
@@ -139,7 +154,7 @@
   }
 
   .subtitle {
-    margin: 0.5rem 0 1.5rem 0;
+    margin: 0.35rem 0 1.25rem 0;
     text-align: center;
     font-size: 0.875rem;
     color: #94a3b8;

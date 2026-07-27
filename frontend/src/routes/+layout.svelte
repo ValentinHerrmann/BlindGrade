@@ -30,11 +30,14 @@
 </script>
 
 <div class="app-layout">
-  <header class="app-header">
-    <div class="brand">
-      <a href="/">BlindGrade</a>
-    </div>
-    {#if $isUnlocked}
+  {#if $isUnlocked}
+    <header class="app-header">
+      <div class="brand">
+        <a href="/">
+          <img src="/favicon.png" alt="BlindGrade logo" class="brand-logo" />
+          <span>BlindGrade</span>
+        </a>
+      </div>
       <nav class="nav-links">
         <a href="/">Dashboard</a>
         <a href="/exercises">Exercise Library</a>
@@ -52,8 +55,8 @@
         {/if}
         <button on:click={handleLock} class="lock-btn">Lock Session</button>
       </div>
-    {/if}
-  </header>
+    </header>
+  {/if}
 
   <main class="app-main">
     <slot />
@@ -106,10 +109,20 @@
   }
 
   .brand a {
-    font-size: 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 1.35rem;
     font-weight: 700;
     color: #38bdf8;
     text-decoration: none;
+  }
+
+  .brand-logo {
+    width: 38px;
+    height: 38px;
+    object-fit: contain;
+    border-radius: 6px;
   }
 
   .nav-links {
