@@ -10,7 +10,7 @@ const STORAGE_KEY = 'bg_storage_policy';
 
 export const DEFAULT_POLICY: StoragePolicy = {
     latexCompilation: 'local',
-    examAndExerciseStorage: 'local',
+    examAndExerciseStorage: 'server',
     resultsAndStudentsData: 'local',
 };
 

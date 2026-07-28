@@ -8,6 +8,9 @@
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
 
+  import { storagePolicyStore } from '$lib/stores/storagePolicy';
+  import { api } from '$lib/api/client';
+
   let exams: ExamRecord[] = [];
   let isImporting = false;
   let importStatus = '';
@@ -47,7 +50,35 @@
 
   async function refreshExams() {
     const key = get(sessionStore).sessionKey;
-    exams = await loadExamsEncrypted(key);
+    if ($storagePolicyStore.examAndExerciseStorage === 'server') {
+      try {
+        const remoteExams = (await api.get('/exams')) as any[];
+        exams = remoteExams.map((e: any) => ({
+          id: e.id,
+          teacherId: e.teacher_id,
+          title: e.title,
+          testart: e.testart || undefined,
+          klasse: e.klasse || undefined,
+          datum: e.datum || undefined,
+          nr: e.nr || undefined,
+          fach: e.fach || undefined,
+          lehrernachname: e.lehrernachname || undefined,
+          infoText: e.info_text || undefined,
+          latexTemplate: e.latex_template || '',
+          compilationStatus: e.compilation_status || 'pending',
+          retentionUntil: e.retention_until || '',
+          createdAt: e.created_at || new Date().toISOString(),
+        }));
+        const encryptedExams = await Promise.all(exams.map((ex) => saveExamEncrypted(ex, key)));
+        await db.exams.bulkPut(encryptedExams);
+      } catch (apiErr) {
+        console.warn('Failed to fetch remote exams, falling back to IDB:', apiErr);
+        exams = await loadExamsEncrypted(key);
+      }
+    } else {
+      exams = await loadExamsEncrypted(key);
+    }
+
     for (const exam of exams) {
       if (exam.retentionUntil) {
         const check = checkRetention(exam.retentionUntil);
