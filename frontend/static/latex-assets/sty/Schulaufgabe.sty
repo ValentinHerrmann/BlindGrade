@@ -1,0 +1,363 @@
+% ==============================================================================
+% Schulaufgabe.sty - Package for Exam Layouts
+% ==============================================================================
+\NeedsTeXFormat{LaTeX2e}[1994/06/01]
+\ProvidesPackage{sty/Schulaufgabe}[2020/01/21 Schulaufgabenumgebung]
+
+% Load package dependencies
+\RequirePackage{sty/packages}
+\RequirePackage{sty/Loesung}
+
+\pagestyle{fancy}
+
+% ==============================================================================
+% 1. State, Counters and Lengths
+% ==============================================================================
+\newboolean{Antworten}
+\setboolean{Antworten}{false}
+
+\newboolean{Pkt}
+\setboolean{Pkt}{false}
+
+\newcounter{Punkte}
+\setcounter{Punkte}{0}
+
+\newcounter{i}
+\newcount\N
+\newcounter{Notenzeile}
+\setcounter{Notenzeile}{0}
+
+% \aPunkte array removed (unused)
+
+\newlength{\karo}
+\newlength{\xkaro}
+\newlength{\ykaro}
+\newcounter{xkar}
+\newcounter{ykar}
+\definecolor{hellgrau}{gray}{.6}
+
+% Token registers for generating the points table
+\newtoks\cols
+\newtoks\scorecols
+\newtoks\last
+
+% ==============================================================================
+% 2. Checkmark Symbols (TikZ)
+% ==============================================================================
+\def\fullcheckmark{%
+    \tikz\draw[scale=0.4,fill=black](0,.35) -- (.25,0) -- (1,.7) -- (.25,.15);%
+}
+
+\def\halfcheckmark{%
+    \tikz\draw[scale=0.4,fill=black](0,.35) -- (.25,0) -- (1,.7) -- (.25,.15) -- cycle (0.75,0.2) -- (0.77,0.2)  -- (0.6,0.7) -- cycle;%
+}
+
+\def\quartcheckmark{%
+    \tikz\draw[scale=0.4,fill=black](0,.35) -- (.25,0) -- (1,.7) -- (.25,.15) -- 
+    cycle (0.65,0.1) -- (0.67,0.1)  -- (0.6,0.8) -- cycle  -- 
+    cycle (0.85,0.3) -- (0.87,0.2)  -- (0.8,0.9) -- cycle;%
+}
+
+% ==============================================================================
+% 3. Core Metadata & Configuration Commands
+% ==============================================================================
+\graphicspath{{./img/}}
+
+% Metadata commands initialized to avoid undefined control sequence errors
+\newcommand*{\Fachtext}{}
+\newcommand*{\Lehrertext}{}
+\newcommand*{\Lehrervornametext}{}
+\newcommand*{\Lehrernachnametext}{}
+\newcommand*{\Infotext}{}
+\newcommand*{\Testarttesttext}{}
+\newcommand*{\Datumtext}{}
+\newcommand*{\Klassetext}{}
+\newcommand*{\Nrtext}{}
+\newcommand*{\LFarbe}{blue}
+
+\newcommand{\Fach}[1]{\gdef\Fachtext{#1}}
+\newcommand{\Lehrer}[1]{\gdef\Lehrertext{#1}}
+\newcommand{\Lehrervorname}[1]{\gdef\Lehrervornametext{#1}}
+\newcommand{\Lehrernachname}[1]{\gdef\Lehrernachnametext{#1}}
+\newcommand{\Info}[1]{\gdef\Infotext{#1}}
+\newcommand{\Testart}[1]{\gdef\Testarttesttext{#1}}
+\newcommand{\Datum}[1]{\gdef\Datumtext{#1}}
+\newcommand{\Klasse}[1]{\gdef\Klassetext{#1}}
+\newcommand{\Nr}[1]{\gdef\Nrtext{#1}}
+\newcommand{\LoesungFarbe}[1]{\gdef\LFarbe{#1}}
+
+% ==============================================================================
+% 4. Scoring Helpers & Points Accumulation
+% ==============================================================================
+
+% Initialize global total score variable
+\gdef\TotalScoreG{0}
+
+% Helper to safely format xfp float outputs (e.g., 1.25 -> 1,25)
+\newcommand{\formatScore}[1]{%
+    \expandafter\@formatScore\fpeval{#1}..\@nil
+}
+\def\@formatScore#1.#2.#3\@nil{%
+    \ifx\relax#2\relax
+        #1% No decimal present
+    \else
+        #1,#2% Replaces dot with comma
+    \fi
+}
+
+% BE Commands: \xdef globally accumulates the score into \TaskScore
+\newcommand{\BE}{%
+    \ifcsname TaskScore\endcsname\else\gdef\TaskScore{0}\fi%
+    \xdef\TaskScore{\fpeval{\TaskScore + 1}}%
+    \ifthenelse{
+        \boolean{Antworten}
+    }{
+        \textcolor{\LFarbe}{\fullcheckmark}
+    }{}%
+}
+\newcommand{\hBE}{%
+    \ifcsname TaskScore\endcsname\else\gdef\TaskScore{0}\fi%
+    \xdef\TaskScore{\fpeval{\TaskScore + 0.5}}%
+    \ifthenelse{
+        \boolean{Antworten}
+    }{
+        \textcolor{\LFarbe}{\halfcheckmark}
+    }{}%
+}
+\newcommand{\qBE}{%
+    \ifcsname TaskScore\endcsname\else\gdef\TaskScore{0}\fi%
+    \xdef\TaskScore{\fpeval{\TaskScore + 0.25}}%
+    \ifthenelse{
+        \boolean{Antworten}
+    }{
+        \textcolor{\LFarbe}{\quartcheckmark}
+    }{}%
+}
+
+% Safely fetches the score of a given exercise number (1, 2, 3...)
+\newcommand{\getScore}[1]{%
+    \ifcsname AufgabeScore#1\endcsname
+        \csname AufgabeScore#1\endcsname%
+    \else
+        -% Fallback during first compile
+    \fi
+}
+
+% \maketabularrow removed (unused)
+
+% ==============================================================================
+% 5. Package Options
+% ==============================================================================
+
+% Sans-serif Font Option
+\DeclareOption{sans}{%
+    \renewcommand*\familydefault{\sfdefault}%
+}
+
+% Roman (Serif) Font Option
+\DeclareOption{roman}{%
+    \renewcommand{\familydefault}{\rmdefault}%
+}
+
+% Show answers / Erwartungshorizont
+\DeclareOption{antworten}{%
+    \setboolean{Antworten}{true}%
+}
+
+% Show points table at the end
+\DeclareOption{punkte}{%
+    \setboolean{Pkt}{true}%
+}
+
+% Global indentation option
+\newif\if@neverindent\@neverindentfalse
+\DeclareOption{neverindent}{%
+    \@neverindenttrue%
+}
+
+\ExecuteOptions{roman}
+\ProcessOptions\relax
+
+% ==============================================================================
+% 6. Name Box (Namenszeile) & Header Setup
+% ==============================================================================
+
+\newcommand{\Namenszeile}{
+    \LARGE\begin{center}
+    \ifthenelse
+    {\boolean{Antworten}}
+    {\color{\LFarbe}Erwartungshorizont \\ \normalsize Korrektur-Symbole: \fullcheckmark 1BE, \halfcheckmark 0,5BE, \quartcheckmark 0,25BE; \Large \sout{V} \normalsize fehlt; \Large f \normalsize falsch; \large FF/WF \normalsize kein Abzug, da Folge-/Wiederholungsfehler \color{black}}
+    {
+        \setlength\unitlength{1cm}
+        \centering
+        \begin{minipage}[t]{3.5cm}
+        \vspace{0pt} % Setzt die Grundlinie an die physische Oberkante
+        \textcolor{gray}{
+            \dashbox{0.2}(3.5,3.5){
+                \parbox{3.5cm}{
+                    \centering QR Code \\
+                    \normalsize \vspace{0.8cm}\LoesungLuecke{}{2.5cm}\\$\uparrow$~Deine Initialen~$\uparrow$\\
+                    (falls QR-Code abfällt)
+                }
+            }
+        }
+        \end{minipage}% <-- Ein % hier verhindert einen ungewollten Zeilenumbruch/Abstand
+        \begin{minipage}[t]{15cm}
+        \vspace{5pt} % Setzt die Grundlinie an die physische Oberkante
+        \normalsize\Infotext
+        \end{minipage}
+    }
+    \normalsize
+    
+    \vspace{-0.7cm}
+    \textcolor{lightgray}{\noindent\rule{\textwidth}{0.5pt}}
+    \end{center}
+}
+
+% Setup headers and footers at document start
+\AtBeginDocument{
+    \lhead{\ifnum\thepage=1 
+    {\includegraphics[height=9mm]{logo_mtg.pdf}}
+    \else
+    \Nrtext. \Testarttesttext \ in \Fachtext%Name:
+    \fi}
+    \rhead{
+    \ifnum\thepage=1
+    {
+    \Datumtext \\
+    Klasse \Klassetext \ (\Lehrernachnametext)}
+    \else
+    \fi
+    }
+    \chead{
+    \ifnum\thepage=1
+    {
+    \Large
+    \Nrtext. \Testarttesttext \ in \Fachtext \normalsize
+    }
+    \else
+    \fi
+    }
+
+    \ifthenelse
+        {\isundefined{\LFarbe}}
+        {\newcommand{\LFarbe}{blue}}
+        {}
+        \Namenszeile
+}
+
+% ==============================================================================
+% 7. Points Table Generation at Document End
+% ==============================================================================
+
+\AtEndDocument{%
+    \vfill
+    \ifthenelse{\boolean{Pkt}}{%
+        \Large
+        \noindent
+        \N=\value{Punkte}%
+        \setcounter{Notenzeile}{\value{Punkte}}%
+        \stepcounter{Notenzeile}%
+        \cols={}%
+        \scorecols={}%
+        \last={}%
+        \setcounter{i}{1}%
+        \loop
+            \edef\tempcols{\the\cols \the\value{i}}%
+            \cols=\expandafter{\tempcols}%
+            \edef\tempscores{\the\scorecols \noexpand\getScore{\the\value{i}}}%
+            \scorecols=\expandafter{\tempscores}%
+            \ifnum\value{i}<\N
+                \cols=\expandafter{\the\cols &}%
+                \scorecols=\expandafter{\the\scorecols &}%
+                \last=\expandafter{\the\last&}%
+                \stepcounter{i}%
+        \repeat
+        
+        \noindent\begin{tabularx}{\textwidth}{|*{\N}{C|}C|C|}\hline
+            \the\cols & $\sum$ & Note\\\hline
+            \the\scorecols & \formatScore{\TotalScoreG} & \\\cline{1-\theNotenzeile}
+            \the\last &&\\\hline
+        \end{tabularx}%
+        \normalsize
+    }{}%
+}
+
+% ==============================================================================
+% 8. Exercise Environment (Aufgabe) & Layout Settings
+% ==============================================================================
+
+\newlength{\FirstColWidth}
+\setlength{\FirstColWidth}{2mm}
+\newlength{\LastColWidth}
+\setlength{\LastColWidth}{15mm}
+\newlength{\MiddleColWidth}
+\setlength{\MiddleColWidth}{\dimexpr\textwidth - \FirstColWidth - \LastColWidth - 5mm}
+
+\newenvironment{Aufgabe}[2][]
+{%
+\begin{minipage}[t]{\textwidth}
+    \neverindent 
+    \gdef\TaskScore{0}% Reset task score accumulator for the new exercise
+    \def\ManualScore{#1}% Store optional override
+    \stepcounter{Punkte}%
+    
+    % Read from .aux to populate the score box
+    \ifcsname AufgabeScore\thePunkte\endcsname
+        \edef\Pkt{\csname AufgabeScore\thePunkte\endcsname}%
+        \def\PrintPkt{\formatScore{\Pkt}}%
+    \else
+        \def\Pkt{0}% Fallback for internal arrays
+        \def\PrintPkt{-}% UI Fallback for the very first compilation
+    \fi
+    % \aPunkte mapping removed (unused)
+    \ifdim\pagetotal=0pt
+        \def\wrapvspace{0pt}%
+    \else
+        \def\wrapvspace{-1.5\baselineskip}%
+    \fi
+    \vspace{.1mm}%
+    \par\noindent
+    
+    % Wrapfigure floats the score box right
+    \begin{wrapfigure}{r}{3cm}
+        \vspace{\wrapvspace}% 
+        \raggedleft
+        \Large\framebox[1.1\width]{ ~~~~~ / ~\PrintPkt~}%
+    \end{wrapfigure}%
+    
+    % Print title
+    \textbf{\Large (\thePunkte) #2} \quad
+    \ignorespaces \normalsize
+}
+{%
+    \par\vspace{1ex}%
+    % Determine final score: auto-calculated or manual override?
+    \ifx\ManualScore\empty
+        \xdef\FinalScore{\TaskScore}%
+    \else
+        \xdef\FinalScore{\ManualScore}%
+    \fi
+    
+    % Write the evaluated score to the .aux file for the next run
+    \immediate\write\@auxout{\string\expandafter\string\gdef\string\csname\space AufgabeScore\thePunkte\string\endcsname{\FinalScore}}%
+    
+    % Add current score to global exam total
+    \xdef\TotalScoreG{\fpeval{\TotalScoreG + \FinalScore}}%
+\end{minipage}
+    \normalsize
+}
+
+% ==============================================================================
+% 9. Indentation Behavior
+% ==============================================================================
+\newlength{\pardefault}
+\setlength{\pardefault}{\parindent}
+\newcommand{\neverindent}{\setlength{\parindent}{0pt}}
+\newcommand{\autoindent}{\setlength{\parindent}{\pardefault}}
+
+\if@neverindent
+    \neverindent
+\fi
+
+\endinput

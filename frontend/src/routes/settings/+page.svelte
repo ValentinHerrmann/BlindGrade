@@ -61,32 +61,49 @@
 
   onMount(async () => {
     if (!$isUnlocked) {
-      goto("/unlock");
-      return;
+      await sessionStore.initAnonymousSession();
     }
     const key = get(sessionStore).sessionKey;
     students = await loadStudentsEncrypted(key);
   });
 
-  async function handlePolicyChange(newPolicy: StoragePolicy) {
-    if (newPolicy === $storagePolicyStore) return;
+  async function handleLatexChange(val: "server" | "local") {
+    storagePolicyStore.updateSetting("latexCompilation", val);
+    statusMsg = `LaTeX Compilation set to ${val}.`;
+  }
 
-    if (newPolicy === "server-synced") {
-      // Local -> Server transition: check unsynced counts
+  async function handleExamStorageChange(val: "server" | "local") {
+    if (val === $storagePolicyStore.examAndExerciseStorage) return;
+
+    if (val === "server") {
       const counts = await checkUnsyncedLocalCount();
-      if (counts.total > 0) {
+      if (counts.unsyncedExams > 0 || counts.unsyncedExercises > 0) {
         unsyncedCounts = counts;
         showMigrationModal = true;
         return;
       }
-    } else if (newPolicy === "local-only") {
-      // Server -> Local transition: offer backup & purge modal
+    }
+    storagePolicyStore.updateSetting("examAndExerciseStorage", val);
+    statusMsg = `Exam & Exercise storage set to ${val}.`;
+  }
+
+  async function handleStudentDataChange(val: "server" | "local") {
+    if (val === $storagePolicyStore.resultsAndStudentsData) return;
+
+    if (val === "server") {
+      const counts = await checkUnsyncedLocalCount();
+      if (counts.unsyncedStudents > 0 || counts.unsyncedSubmissions > 0) {
+        unsyncedCounts = counts;
+        showMigrationModal = true;
+        return;
+      }
+    } else if (val === "local") {
       showPurgeModal = true;
       return;
     }
 
-    storagePolicyStore.setPolicy(newPolicy);
-    statusMsg = `Personal data storage policy set to: ${getStoragePolicyLabel(newPolicy)}`;
+    storagePolicyStore.updateSetting("resultsAndStudentsData", val);
+    statusMsg = `Results & Students data storage set to ${val}.`;
   }
 
   async function startMigration() {
@@ -95,7 +112,8 @@
       await syncLocalDataToServer((step, current, total) => {
         syncProgressMsg = `${step} (${current}/${total})...`;
       });
-      storagePolicyStore.setPolicy("server-synced");
+      storagePolicyStore.updateSetting("examAndExerciseStorage", "server");
+      storagePolicyStore.updateSetting("resultsAndStudentsData", "server");
       statusMsg = "All local data successfully synced to server!";
       showMigrationModal = false;
     } catch (err: any) {
@@ -107,8 +125,9 @@
   }
 
   function skipMigration() {
-    storagePolicyStore.setPolicy("server-synced");
-    statusMsg = `Storage policy changed to: ${getStoragePolicyLabel("server-synced")}`;
+    storagePolicyStore.updateSetting("examAndExerciseStorage", "server");
+    storagePolicyStore.updateSetting("resultsAndStudentsData", "server");
+    statusMsg = "Storage policy updated to server.";
     showMigrationModal = false;
   }
 
@@ -120,7 +139,7 @@
     isPurging = true;
     try {
       const result = await downloadBackupAndPurgeServer(purgePassword);
-      storagePolicyStore.setPolicy("local-only");
+      storagePolicyStore.updateSetting("resultsAndStudentsData", "local");
       statusMsg = `Backup downloaded! ${result.purgedStudents} student records and ${result.purgedSubmissions} submissions soft-deleted on server (7-day retention until ${result.retentionUntil}).`;
       showPurgeModal = false;
       purgePassword = "";
@@ -173,60 +192,102 @@
 
 {#if $isUnlocked}
   <div class="settings-page">
-    <h2>Settings & GDPR Compliance</h2>
+    <h2>Settings & Privacy Configuration</h2>
 
     {#if statusMsg}
       <div class="status-banner">{statusMsg}</div>
     {/if}
 
     <div class="card" id="storage-policy">
-      <h3>Data Storage & Privacy Policy</h3>
-      <p class="description">
-        Select where LaTeX templates and student data are stored:
-      </p>
+      <h3>1. LaTeX Compilation</h3>
+      <p class="description">Select where LaTeX files are compiled:</p>
       <div class="policy-options">
-        <label
-          class="option-card"
-          class:active={$storagePolicyStore === "local-only"}
-        >
+        <label class="option-card" class:active={$storagePolicyStore.latexCompilation === "local"}>
           <input
             type="radio"
-            name="storagePolicy"
-            value="local-only"
-            checked={$storagePolicyStore === "local-only"}
-            on:change={() => handlePolicyChange("local-only")}
+            name="latexCompilation"
+            value="local"
+            checked={$storagePolicyStore.latexCompilation === "local"}
+            on:change={() => handleLatexChange("local")}
           />
           <div>
-            <strong
-              >Latex on server + Student data local only (download before
-              logout!)</strong
-            >
-            <p>
-              LaTeX compilation runs on server. Student identities & scans
-              remain exclusively in browser IndexedDB. Make sure to download
-              after each session as data might be lost after logout!
-            </p>
+            <strong>Local Client (WebAssembly)</strong>
+            <p>Compiles inside your browser without sending source to any server.</p>
           </div>
         </label>
-
-        <label
-          class="option-card"
-          class:active={$storagePolicyStore === "server-synced"}
-        >
+        <label class="option-card" class:active={$storagePolicyStore.latexCompilation === "server"}>
           <input
             type="radio"
-            name="storagePolicy"
-            value="server-synced"
-            checked={$storagePolicyStore === "server-synced"}
-            on:change={() => handlePolicyChange("server-synced")}
+            name="latexCompilation"
+            value="server"
+            checked={$storagePolicyStore.latexCompilation === "server"}
+            on:change={() => handleLatexChange("server")}
           />
           <div>
-            <strong>Latex on server + Student data encrypted on server</strong>
-            <p>
-              LaTeX compilation runs on server. Student identities are
-              AES-256-GCM encrypted client-side before syncing to database.
-              Nobody except you can decrypt them; not even server admins.
-            </p>
+            <strong>Server (Tectonic)</strong>
+            <p>High performance server-side compilation. Requires authenticated account.</p>
+          </div>
+        </label>
+      </div>
+
+      <h3 style="margin-top: 1.5rem;">2. Exam & Exercise Storage</h3>
+      <p class="description">Select where exams and exercise templates are stored:</p>
+      <div class="policy-options">
+        <label class="option-card" class:active={$storagePolicyStore.examAndExerciseStorage === "local"}>
+          <input
+            type="radio"
+            name="examAndExerciseStorage"
+            value="local"
+            checked={$storagePolicyStore.examAndExerciseStorage === "local"}
+            on:change={() => handleExamStorageChange("local")}
+          />
+          <div>
+            <strong>Local File / Browser DB</strong>
+            <p>Exams and exercise library stored exclusively in your browser.</p>
+          </div>
+        </label>
+        <label class="option-card" class:active={$storagePolicyStore.examAndExerciseStorage === "server"}>
+          <input
+            type="radio"
+            name="examAndExerciseStorage"
+            value="server"
+            checked={$storagePolicyStore.examAndExerciseStorage === "server"}
+            on:change={() => handleExamStorageChange("server")}
+          />
+          <div>
+            <strong>Server Storage</strong>
+            <p>Exams and exercise templates stored securely in your server account.</p>
+          </div>
+        </label>
+      </div>
+
+      <h3 style="margin-top: 1.5rem;">3. Results & Students Data</h3>
+      <p class="description">Select where student identities, scans, and grades are stored:</p>
+      <div class="policy-options">
+        <label class="option-card" class:active={$storagePolicyStore.resultsAndStudentsData === "local"}>
+          <input
+            type="radio"
+            name="resultsAndStudentsData"
+            value="local"
+            checked={$storagePolicyStore.resultsAndStudentsData === "local"}
+            on:change={() => handleStudentDataChange("local")}
+          />
+          <div>
+            <strong>Local File / Browser DB (Privacy First)</strong>
+            <p>Student names, scans, and grades stay 100% on your device.</p>
+          </div>
+        </label>
+        <label class="option-card" class:active={$storagePolicyStore.resultsAndStudentsData === "server"}>
+          <input
+            type="radio"
+            name="resultsAndStudentsData"
+            value="server"
+            checked={$storagePolicyStore.resultsAndStudentsData === "server"}
+            on:change={() => handleStudentDataChange("server")}
+          />
+          <div>
+            <strong>Server Encrypted Storage</strong>
+            <p>Student data is AES-256-GCM encrypted client-side before syncing to database.</p>
           </div>
         </label>
       </div>

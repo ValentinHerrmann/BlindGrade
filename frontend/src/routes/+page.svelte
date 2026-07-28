@@ -40,8 +40,7 @@
 
   onMount(async () => {
     if (!$isUnlocked) {
-      window.location.href = '/unlock';
-      return;
+      await sessionStore.initAnonymousSession();
     }
     await refreshExams();
   });

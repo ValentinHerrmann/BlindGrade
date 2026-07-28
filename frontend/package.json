@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "cp -r ../backend/latex-assets static/ && node scripts/generate-latex-assets-index.js",
     "dev": "vite dev",
+    "prebuild": "cp -r ../backend/latex-assets static/ && node scripts/generate-latex-assets-index.js",
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
@@ -12,7 +14,8 @@
     "lint": "eslint .",
     "test:unit": "vitest",
     "test:e2e": "playwright test",
-    "sri:verify": "node scripts/verify-sri.mjs"
+    "sri:verify": "node scripts/verify-sri.mjs",
+    "postinstall": "npx texlyre-busytex download-assets static/core"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.1",
@@ -25,6 +28,7 @@
     "fflate": "^0.8.2",
     "pdfjs-dist": "^6.1.200",
     "qrcode": "^1.5.3",
+    "texlyre-busytex": "^1.2.3",
     "zxing-wasm": "^1.2.3"
   },
   "devDependencies": {

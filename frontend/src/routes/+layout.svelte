@@ -3,15 +3,23 @@
   import { beforeNavigate } from "$app/navigation";
   import { get } from "svelte/store";
   import { registerHygieneListeners, lockSession } from "$lib/db/hygiene";
-  import { sessionStore, isUnlocked } from "$lib/stores/session";
+  import { db, clearAllTables } from "$lib/db/db";
+  import { sessionStore, isUnlocked, isAuthenticated } from "$lib/stores/session";
   import {
     storagePolicyStore,
     storagePolicyLabelStore,
     storagePolicyBadgeStore,
   } from "$lib/stores/storagePolicy";
+  import { packProject } from "$lib/archive/packer";
+  import { unpackProject } from "$lib/archive/unpacker";
 
-  onMount(() => {
+  let fileInput: HTMLInputElement;
+
+  onMount(async () => {
     registerHygieneListeners();
+    if (!get(isUnlocked)) {
+      await sessionStore.initAnonymousSession();
+    }
   });
 
   beforeNavigate(({ cancel }) => {
@@ -27,7 +35,90 @@
     await lockSession();
     window.location.href = "/unlock";
   }
+
+  function triggerOpenBgproj() {
+    fileInput?.click();
+  }
+
+  async function handleFileSelected(event: Event) {
+    const input = event.target as HTMLInputElement;
+    if (!input.files || input.files.length === 0) return;
+    const file = input.files[0];
+
+    if (
+      !confirm(
+        "Opening a new .bgproj file will replace your current workspace and clear existing local data. Unsaved changes will be lost. Continue?"
+      )
+    ) {
+      input.value = "";
+      return;
+    }
+
+    const password = prompt("Enter password for this .bgproj archive:");
+    if (!password) {
+      input.value = "";
+      return;
+    }
+
+    try {
+      const buffer = new Uint8Array(await file.arrayBuffer());
+      await clearAllTables();
+      await unpackProject(buffer, password);
+      alert("Successfully imported project archive!");
+      window.location.href = "/";
+    } catch (err: any) {
+      alert(`Failed to import archive: ${err.message}`);
+    } finally {
+      input.value = "";
+    }
+  }
+
+  async function handleExportBgproj() {
+    const password = prompt("Enter password to encrypt .bgproj archive:");
+    if (!password) return;
+
+    try {
+      const bytes = await packProject(password);
+      const blob = new Blob([bytes.buffer as ArrayBuffer], {
+        type: "application/octet-stream",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "workspace.bgproj";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(`Export failed: ${err.message}`);
+    }
+  }
+
+  async function handleCloseWorkspace() {
+    if (
+      !confirm(
+        "Are you sure you want to close this project and clear all local workspace data? Unsaved changes will be lost."
+      )
+    ) {
+      return;
+    }
+
+    try {
+      await clearAllTables();
+      alert("Workspace cleared successfully.");
+      window.location.href = "/";
+    } catch (err: any) {
+      alert(`Failed to clear workspace: ${err.message}`);
+    }
+  }
 </script>
+
+<input
+  type="file"
+  accept=".bgproj"
+  style="display: none"
+  bind:this={fileInput}
+  on:change={handleFileSelected}
+/>
 
 <div class="app-layout">
   {#if $isUnlocked}
@@ -47,13 +138,28 @@
         <a href="/settings">Settings</a>
       </nav>
       <div class="session-info">
+        <button class="action-btn" on:click={triggerOpenBgproj} title="Open .bgproj File">
+          📂 Open .bgproj
+        </button>
+        <button class="action-btn" on:click={handleExportBgproj} title="Export Workspace to .bgproj">
+          💾 Export .bgproj
+        </button>
+        <button class="action-btn danger" on:click={handleCloseWorkspace} title="Clear Local Workspace Data">
+          ❌ Clear Workspace
+        </button>
+
         {#if $sessionStore.role}
           <span class="mode-badge">{$sessionStore.role}</span>
         {/if}
         {#if $sessionStore.email}
           <span class="user-email">{$sessionStore.email}</span>
         {/if}
-        <button on:click={handleLock} class="lock-btn">Lock Session</button>
+
+        {#if !$isAuthenticated}
+          <a href="/unlock" class="login-btn">Log In</a>
+        {:else}
+          <button on:click={handleLock} class="lock-btn">Lock Session</button>
+        {/if}
       </div>
     </header>
   {/if}
@@ -89,6 +195,16 @@
       sans-serif;
     background-color: #0f172a;
     color: #f8fafc;
+  }
+
+  :global(.is-loading) {
+    animation: pulse 1.5s infinite ease-in-out !important;
+    pointer-events: none;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
   }
 
   .app-layout {
@@ -159,6 +275,49 @@
   .user-email {
     font-size: 0.875rem;
     color: #94a3b8;
+  }
+
+  .login-btn {
+    padding: 0.375rem 0.85rem;
+    background: #0284c7;
+    color: white;
+    text-decoration: none;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 0.875rem;
+  }
+
+  .login-btn:hover {
+    background: #0369a1;
+  }
+
+  .action-btn {
+    padding: 0.375rem 0.65rem;
+    background: #334155;
+    color: #f8fafc;
+    border: 1px solid #475569;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+
+  .action-btn:hover {
+    background: #475569;
+    border-color: #64748b;
+  }
+
+  .action-btn.danger {
+    background: #7f1d1d;
+    border-color: #991b1b;
+    color: #fecdd3;
+  }
+
+  .action-btn.danger:hover {
+    background: #991b1b;
   }
 
   .lock-btn {

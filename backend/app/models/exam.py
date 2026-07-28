@@ -35,6 +35,7 @@ class Exam(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     retention_until: Mapped[date] = mapped_column(Date, nullable=False)
+    is_public: Mapped[bool] = mapped_column(nullable=False, default=False, server_default="false")
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     testart: Mapped[str | None] = mapped_column(String(100), nullable=True)

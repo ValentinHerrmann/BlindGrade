@@ -81,7 +81,7 @@ async def list_exercises(
 ) -> list[ExerciseResponse]:
     """List all exercises in the teacher's exercise library."""
     query = select(Exercise).where(
-        or_(Exercise.teacher_id == teacher.id, Exercise.teacher_id.is_(None))
+        or_(Exercise.teacher_id == teacher.id, Exercise.is_public.is_(True))
     )
 
     if current_only:

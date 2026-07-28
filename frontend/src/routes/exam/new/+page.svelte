@@ -7,10 +7,12 @@
   import { loadExercisesEncrypted, saveExerciseEncrypted, saveExamEncrypted, encryptExercise } from "$lib/db/dbEncryption";
   import { api } from "$lib/api/client";
   import { parseExerciseScore, formatExerciseLatex } from "$lib/latex/scoreParser";
+  import { compileLatex } from "$lib/latex/compiler";
   import { get } from "svelte/store";
   import LatexEditor from "$lib/components/LatexEditor.svelte";
   import LatexViewer from "$lib/components/LatexViewer.svelte";
   import ExerciseEditorModal from "$lib/components/ExerciseEditorModal.svelte";
+  import DualPdfPreview from "$lib/components/DualPdfPreview.svelte";
 
   // Metadata
   let title = "";
@@ -88,6 +90,9 @@ Frage hier eingeben... \\BE
   let isLoading = false;
   let errorMsg = "";
   let previewPdfUrl: string | null = null;
+  let previewSolutionPdfUrl: string | null = null;
+  let showAngabePreview = true;
+  let showLoesungPreview = false;
   let isPreviewLoading = false;
 
   $: availableTopics = Array.from(
@@ -218,7 +223,7 @@ Frage hier eingeben... \\BE
   async function loadLibrary() {
     const key = get(sessionStore).sessionKey;
     try {
-      if ($storagePolicyStore === "server-synced") {
+      if ($storagePolicyStore.examAndExerciseStorage === "server") {
         try {
           const remoteExs = (await api.get("/exercises")) as any[];
           libraryExercises = remoteExs.map((e: any) => ({
@@ -317,7 +322,7 @@ Frage hier eingeben... \\BE
     if (saveCustomToLibrary) {
       const key = get(sessionStore).sessionKey;
       await saveExerciseEncrypted(newEx, key);
-      if ($storagePolicyStore === "server-synced") {
+      if ($storagePolicyStore.examAndExerciseStorage === "server") {
         try {
           await api.post("/exercises", {
             id: newEx.id,
@@ -356,8 +361,8 @@ Frage hier eingeben... \\BE
         )
         .join("\n\n");
 
-      const fullTex = `\\documentclass[a4paper]{article}
-\\usepackage[sans,punkte]{sty/Schulaufgabe}
+      const getPreamble = (options: string) => `\\documentclass[a4paper]{article}
+\\usepackage[${options}]{sty/Schulaufgabe}
 \\Info{${infoText}}
 \\Fach{${fach}}
 \\Lehrernachname{${lehrernachname}}
@@ -380,12 +385,34 @@ ${exerciseInputs}
 
 \\end{document}`;
 
-      const pdfBuffer = await api.postJsonForBinary("/compile/latex", {
-        latex: fullTex,
-      });
-      const blob = new Blob([pdfBuffer], { type: "application/pdf" });
+      const fullTexAngabe = getPreamble("sans,punkte");
+      const fullTexLoesung = getPreamble("sans,punkte,antworten");
+
+      const useLocal = $storagePolicyStore.latexCompilation === "local";
+      if (useLocal) {
+        errorMsg = "Compiling PDF...";
+      }
+
+      const [resAngabe, resLoesung] = await Promise.all([
+        compileLatex(fullTexAngabe, useLocal, (status) => {
+          if (status === 'downloading') {
+            errorMsg = "Loading local LaTeX compiler... (Downloading ~32MB on first load, please wait)";
+          } else if (status === 'compiling') {
+            errorMsg = "Compiling PDF...";
+          }
+        }, false),
+        compileLatex(fullTexLoesung, useLocal, undefined, false)
+      ]);
+
+      errorMsg = ""; // clear loading message
+      const blobAngabe = new Blob([resAngabe.pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
+      const blobLoesung = new Blob([resLoesung.pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
+
       if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
-      previewPdfUrl = URL.createObjectURL(blob);
+      if (previewSolutionPdfUrl) URL.revokeObjectURL(previewSolutionPdfUrl);
+
+      previewPdfUrl = URL.createObjectURL(blobAngabe);
+      previewSolutionPdfUrl = URL.createObjectURL(blobLoesung);
     } catch (err: any) {
       errorMsg = err.message || "Preview compilation failed.";
     } finally {
@@ -436,7 +463,7 @@ ${exerciseInputs}
       }));
       await db.examExercises.bulkPut(examExerciseRecords);
 
-      if ($storagePolicyStore === "server-synced") {
+      if ($storagePolicyStore.examAndExerciseStorage === "server") {
         try {
           await api.post("/exams", {
             id: examId,
@@ -811,6 +838,7 @@ ${exerciseInputs}
         <button
           type="button"
           class="preview-btn"
+          class:is-loading={isPreviewLoading}
           on:click={handleLivePreview}
           disabled={isPreviewLoading || selectedExercises.length === 0}
         >
@@ -874,21 +902,26 @@ ${exerciseInputs}
       {/if}
     </div>
 
-    {#if previewPdfUrl}
+    {#if previewPdfUrl || previewSolutionPdfUrl}
       <div class="preview-container">
         <h4>Complete Exam PDF Live Preview</h4>
-        <iframe
-          src={previewPdfUrl}
-          title="LaTeX Exam Preview"
-          width="100%"
-          height="500px"
-        ></iframe>
+        <DualPdfPreview
+          {previewPdfUrl}
+          {previewSolutionPdfUrl}
+          bind:showAngabePreview
+          bind:showLoesungPreview
+          titleAngabe="Exam"
+          titleLoesung="Answer Key"
+          height="600px"
+          placeholderText="Click 'Generate Live Preview' to render"
+        />
       </div>
     {/if}
 
     <button
       type="submit"
       class="submit-btn"
+      class:is-loading={isLoading}
       disabled={isLoading || selectedExercises.length === 0}
     >
       {isLoading ? "Creating Exam..." : "Save Exam & Continue"}
@@ -1296,6 +1329,11 @@ ${exerciseInputs}
     padding: 0.75rem;
     border-radius: 6px;
     margin-bottom: 1.5rem;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 300px;
+    overflow-y: auto;
+    font-family: "Fira Code", monospace;
   }
 
   /* Search & Metrics Header */

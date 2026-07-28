@@ -51,8 +51,8 @@
         mode: "authenticated",
       });
 
-      // Redirect to main page
-      await goto("/");
+      // Redirect to settings page per requirement
+      await goto("/settings");
     } catch (err: any) {
       errorMsg =
         err.message || "Unlock failed. Check your password or credentials.";
@@ -98,7 +98,7 @@
         </small>
       </div>
 
-      <button type="submit" class="submit-btn" disabled={isLoading}>
+      <button type="submit" class="submit-btn" class:is-loading={isLoading} disabled={isLoading}>
         {isLoading ? "Authenticating..." : "Unlock Project"}
       </button>
     </form>

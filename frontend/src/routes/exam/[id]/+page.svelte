@@ -22,10 +22,11 @@
   import { compileLatex } from "$lib/latex/compiler";
   import { formatExerciseLatex } from "$lib/latex/scoreParser";
   import { api } from "$lib/api/client";
-  import { sessionStore } from "$lib/stores/session";
+  import { sessionStore, isAuthenticated } from "$lib/stores/session";
   import { storagePolicyStore } from "$lib/stores/storagePolicy";
   import { get } from "svelte/store";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+  import DualPdfPreview from "$lib/components/DualPdfPreview.svelte";
 
   $: examId = $page.params.id || "";
 
@@ -36,8 +37,14 @@
   let exportSuccess = false;
 
   let isCompiling = false;
+  let isPreviewLoading = false;
   let compileNotice = "";
+  let errorMsg = "";
+
   let previewPdfUrl: string | null = null;
+  let previewSolutionPdfUrl: string | null = null;
+  let showAngabePreview = true;
+  let showLoesungPreview = false;
 
   $: if (examId) {
     loadExam(examId);
@@ -49,7 +56,7 @@
   async function loadExam(id: string) {
     const key = get(sessionStore).sessionKey;
     try {
-      if ($storagePolicyStore === "server-synced") {
+      if ($storagePolicyStore.examAndExerciseStorage === "server") {
         try {
           const remoteExam = (await api.get(`/exams/${id}`)) as any;
           exam = {
@@ -255,7 +262,7 @@
       await db.submissions.where("examId").equals(exam.id).delete();
       await db.students.where("examId").equals(exam.id).delete();
 
-      if ($storagePolicyStore === "server-synced") {
+      if ($storagePolicyStore.examAndExerciseStorage === "server") {
         try {
           await api.delete(`/exams/${exam.id}`);
         } catch (e) {
@@ -296,10 +303,19 @@
   async function handleDownloadExamPdf(showAnswers = false) {
     if (!exam) return;
     isCompiling = true;
-    compileNotice = "";
+    errorMsg = "";
+
+    const useLocal = $storagePolicyStore.latexCompilation === "local";
+    if (!useLocal && !$isAuthenticated) {
+      errorMsg = "Please log in to compile LaTeX on the server.";
+      isCompiling = false;
+      return;
+    }
+
+    compileNotice = "Compiling PDF...";
 
     try {
-      if ($storagePolicyStore === "server-synced") {
+      if ($storagePolicyStore.examAndExerciseStorage === "server") {
         const pdfBuffer = await api.getBinary(
           `/exams/${exam.id}/compile?answers=${showAnswers}`,
         );
@@ -347,7 +363,13 @@ ${exerciseInputs}
 
 \\end{document}`;
 
-        const result = await compileLatex(fullTex);
+        const result = await compileLatex(fullTex, useLocal, (status) => {
+          if (status === 'downloading') {
+            compileNotice = "Loading local LaTeX compiler... (Downloading ~32MB on first load, please wait)";
+          } else if (status === 'compiling') {
+            compileNotice = "Compiling PDF...";
+          }
+        });
         const blob = new Blob([result.pdfBytes.buffer as ArrayBuffer], {
           type: "application/pdf",
         });
@@ -369,9 +391,82 @@ ${exerciseInputs}
         exam.compilationStatus = "failed";
         await saveExamEncrypted(exam, key);
       }
-      alert(`Compilation failed: ${err.message}`);
+      errorMsg = err.message || "Compilation failed.";
     } finally {
       isCompiling = false;
+    }
+  }
+
+  async function handlePreviewExam() {
+    if (!exam || exercises.length === 0) return;
+    const currentExam = exam;
+    isPreviewLoading = true;
+    compileNotice = "";
+    errorMsg = "";
+
+    try {
+      const exerciseInputs = exercises
+        .map((ex, idx) =>
+          formatExerciseLatex(
+            ex.latexBody,
+            ex.name || `Aufgabe ${idx + 1}`,
+          ),
+        )
+        .join("\n\n");
+
+      const getPreamble = (options: string) => `\\documentclass[a4paper]{article}
+\\usepackage[${options}]{sty/Schulaufgabe}
+\\Info{${currentExam.infoText || ""}}
+\\Fach{${currentExam.fach || "Informatik"}}
+\\Lehrernachname{${currentExam.lehrernachname || ""}}
+\\usepackage{bbding}
+\\usepackage{pifont}
+\\usepackage{fontspec}
+\\usepackage{framed}
+\\usepackage{enumitem}
+\\usetikzlibrary{shapes.geometric, arrows}
+\\usepackage{sty/tikz-uml}
+\\neverindent
+\\WarningsOff
+\\begin{document}
+\\Testart{${currentExam.testart || "Kurzarbeit"}}
+\\Klasse{${currentExam.klasse || ""}}
+\\Datum{${currentExam.datum || ""}}
+\\Nr{${currentExam.nr || "1"}}
+
+${exerciseInputs}
+
+\\end{document}`;
+
+      const fullTexAngabe = getPreamble("sans,punkte");
+      const fullTexLoesung = getPreamble("sans,punkte,antworten");
+
+      const useLocal = $storagePolicyStore.latexCompilation === "local";
+
+      const [resAngabe, resLoesung] = await Promise.all([
+        compileLatex(fullTexAngabe, useLocal, (status) => {
+          if (status === 'downloading') {
+            compileNotice = "Loading local LaTeX compiler... (Downloading ~32MB on first load, please wait)";
+          } else if (status === 'compiling') {
+            compileNotice = "Compiling PDF...";
+          }
+        }, false),
+        compileLatex(fullTexLoesung, useLocal, undefined, false)
+      ]);
+
+      compileNotice = "";
+      const blobAngabe = new Blob([resAngabe.pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
+      const blobLoesung = new Blob([resLoesung.pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
+
+      if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
+      if (previewSolutionPdfUrl) URL.revokeObjectURL(previewSolutionPdfUrl);
+
+      previewPdfUrl = URL.createObjectURL(blobAngabe);
+      previewSolutionPdfUrl = URL.createObjectURL(blobLoesung);
+    } catch (err: any) {
+      errorMsg = `Preview failed: ${err.message || "Unknown compilation error"}`;
+    } finally {
+      isPreviewLoading = false;
     }
   }
 
@@ -466,7 +561,7 @@ ${exerciseInputs}
   async function handleSaveMetadata() {
     if (!exam) return;
     try {
-      if ($storagePolicyStore === "server-synced") {
+      if ($storagePolicyStore.examAndExerciseStorage === "server") {
         await api.patch(`/exams/${exam.id}`, {
           title: editTitle,
           testart: editTestart,
@@ -502,7 +597,7 @@ ${exerciseInputs}
   async function openLibraryModal() {
     const key = get(sessionStore).sessionKey;
     try {
-      if ($storagePolicyStore === "server-synced") {
+      if ($storagePolicyStore.examAndExerciseStorage === "server") {
         const remoteExs = (await api.get("/exercises")) as any[];
         libraryExercises = remoteExs.map((e: any) => ({
           id: e.id,
@@ -514,6 +609,7 @@ ${exerciseInputs}
           version: e.version || 1,
           variantKey: e.variant_key,
           isCurrent: e.is_current,
+          isPublic: e.is_public,
           questionType: "free_text",
           penalty: 0,
         }));
@@ -562,7 +658,7 @@ ${exerciseInputs}
     if (!exam) return;
     const exerciseIds = exercises.map((e) => e.id);
     try {
-      if ($storagePolicyStore === "server-synced") {
+      if ($storagePolicyStore.examAndExerciseStorage === "server") {
         await api.patch(`/exams/${exam.id}`, { exercise_ids: exerciseIds });
       }
 
@@ -727,23 +823,52 @@ ${exerciseInputs}
       <div class="controls-row">
         <button
           class="compile-btn"
+          class:is-loading={isPreviewLoading}
+          on:click={handlePreviewExam}
+          disabled={isPreviewLoading || exercises.length === 0}
+        >
+          {isPreviewLoading ? "Compiling Previews..." : "🔍 Live Preview PDF"}
+        </button>
+
+        <button
+          class="compile-btn"
+          class:is-loading={isCompiling}
           on:click={() => handleDownloadExamPdf(false)}
           disabled={isCompiling}
         >
-          {isCompiling ? "Compiling..." : "📄 Download Exam PDF (Angabe)"}
+          {isCompiling ? "Compiling..." : "📄 Download Exam PDF"}
         </button>
 
         <button
           class="solution-btn"
+          class:is-loading={isCompiling}
           on:click={() => handleDownloadExamPdf(true)}
           disabled={isCompiling}
         >
-          {isCompiling ? "Compiling..." : "📝 Download Answer Key (Lösung)"}
+          {isCompiling ? "Compiling..." : "📝 Download Answer Key"}
         </button>
       </div>
 
+      {#if previewPdfUrl || previewSolutionPdfUrl}
+        <div style="margin-top: 1rem;">
+          <DualPdfPreview
+            {previewPdfUrl}
+            {previewSolutionPdfUrl}
+            bind:showAngabePreview
+            bind:showLoesungPreview
+            titleAngabe="Exam"
+            titleLoesung="Answer Key"
+            height="550px"
+            placeholderText="Click 'Live Preview PDF' to render"
+          />
+        </div>
+      {/if}
+
       {#if compileNotice}
         <div class="notice">{compileNotice}</div>
+      {/if}
+      {#if errorMsg}
+        <div class="error-banner">{errorMsg}</div>
       {/if}
     </div>
 
@@ -1012,6 +1137,19 @@ ${exerciseInputs}
     margin-top: 0.75rem;
     font-size: 0.875rem;
     color: #38bdf8;
+  }
+
+  .error-banner {
+    background: rgba(239, 68, 68, 0.2);
+    color: #fca5a5;
+    padding: 1rem;
+    border-radius: 6px;
+    margin-top: 1rem;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 300px;
+    overflow-y: auto;
+    font-family: "Fira Code", monospace;
   }
 
   .nav-cards {

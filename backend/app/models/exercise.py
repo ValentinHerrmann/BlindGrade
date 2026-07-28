@@ -31,6 +31,7 @@ class Exercise(Base):
         ForeignKey("exercise_groups.id", ondelete="SET NULL"), nullable=True, index=True
     )
     variant_key: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    is_public: Mapped[bool] = mapped_column(nullable=False, default=False, server_default="false")
     is_current: Mapped[bool] = mapped_column(nullable=False, default=True)
     question_type: Mapped[str] = mapped_column(
         Enum("free_text", "mc", "sc", "tf", name="question_type"),
