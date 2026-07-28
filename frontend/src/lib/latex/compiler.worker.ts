@@ -1,27 +1,90 @@
-// Setup WASM fetch interceptor for gzipped WASM on Cloudflare Pages
+// Setup WASM & Large Asset fetch interceptor for Cloudflare Pages chunking
 const globalScope: any = typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : globalThis);
 const originalFetch = globalScope.fetch;
 
+interface ManifestEntry {
+  chunks: string[];
+  gzipped: boolean;
+}
+
+let chunkManifestPromise: Promise<Record<string, ManifestEntry>> | null = null;
+
+async function getChunkManifest(): Promise<Record<string, ManifestEntry>> {
+  if (!chunkManifestPromise) {
+    chunkManifestPromise = originalFetch('/core/busytex/chunk-manifest.json')
+      .then(res => res.ok ? res.json() : {})
+      .catch(() => ({}));
+  }
+  return chunkManifestPromise;
+}
+
 globalScope.fetch = async (...args: Parameters<typeof fetch>): Promise<Response> => {
   const requestTarget = args[0];
-  const url = typeof requestTarget === 'string'
+  const urlStr = typeof requestTarget === 'string'
     ? requestTarget
     : (requestTarget && typeof requestTarget === 'object' && 'url' in requestTarget ? (requestTarget as any).url : String(requestTarget));
 
-  if (url && url.endsWith('busytex.wasm')) {
-    const response = await originalFetch(url + '.gz', args[1]);
-    if (response.ok) {
-      const ds = new DecompressionStream('gzip');
-      const decompressedStream = response.body ? response.body.pipeThrough(ds) : response.body;
-      return new Response(decompressedStream, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: {
-          ...Object.fromEntries(response.headers.entries()),
-          'Content-Type': 'application/wasm'
+  try {
+    const parsedUrl = new URL(urlStr, globalScope.location ? globalScope.location.href : 'http://localhost');
+    const pathname = parsedUrl.pathname;
+    const manifest = await getChunkManifest();
+
+    const entry = manifest[pathname];
+    if (entry && entry.chunks && entry.chunks.length > 0) {
+      if (entry.chunks.length === 1) {
+        const response = await originalFetch(entry.chunks[0], args[1]);
+        if (response.ok) {
+          const body = entry.gzipped && typeof DecompressionStream !== 'undefined'
+            ? response.body?.pipeThrough(new DecompressionStream('gzip'))
+            : response.body;
+
+          const contentType = pathname.endsWith('.wasm') ? 'application/wasm' : (response.headers.get('content-type') || 'application/octet-stream');
+          return new Response(body, {
+            status: response.status,
+            statusText: response.statusText,
+            headers: {
+              ...Object.fromEntries(response.headers.entries()),
+              'Content-Type': contentType
+            }
+          });
         }
-      });
+      } else {
+        const responses = await Promise.all(entry.chunks.map(chunkUrl => originalFetch(chunkUrl, args[1])));
+        const allOk = responses.every(r => r.ok);
+        if (allOk) {
+          const combinedStream = new ReadableStream({
+            async start(controller) {
+              for (const res of responses) {
+                if (res.body) {
+                  const reader = res.body.getReader();
+                  while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    controller.enqueue(value);
+                  }
+                }
+              }
+              controller.close();
+            }
+          });
+
+          const body = entry.gzipped && typeof DecompressionStream !== 'undefined'
+            ? combinedStream.pipeThrough(new DecompressionStream('gzip'))
+            : combinedStream;
+
+          const contentType = pathname.endsWith('.wasm') ? 'application/wasm' : (responses[0].headers.get('content-type') || 'application/octet-stream');
+          return new Response(body, {
+            status: 200,
+            statusText: 'OK',
+            headers: {
+              'Content-Type': contentType
+            }
+          });
+        }
+      }
     }
+  } catch (err) {
+    // Fall through to originalFetch on error
   }
 
   return originalFetch(...args);
