@@ -12,7 +12,13 @@ let chunkManifestPromise: Promise<Record<string, ManifestEntry>> | null = null;
 async function getChunkManifest(): Promise<Record<string, ManifestEntry>> {
   if (!chunkManifestPromise) {
     chunkManifestPromise = originalFetch('/core/busytex/chunk-manifest.json')
-      .then(res => res.ok ? res.json() : {})
+      .then(async (res) => {
+        const contentType = res.headers.get('content-type') || '';
+        if (res.ok && contentType.includes('application/json')) {
+          return await res.json();
+        }
+        return {};
+      })
       .catch(() => ({}));
   }
   return chunkManifestPromise;
@@ -38,7 +44,10 @@ globalScope.fetch = async (...args: Parameters<typeof fetch>): Promise<Response>
             ? response.body?.pipeThrough(new DecompressionStream('gzip'))
             : response.body;
 
-          const contentType = pathname.endsWith('.wasm') ? 'application/wasm' : (response.headers.get('content-type') || 'application/octet-stream');
+          const contentType = pathname.endsWith('.wasm')
+            ? 'application/wasm'
+            : (pathname.endsWith('.js') ? 'application/javascript' : (response.headers.get('content-type') || 'application/octet-stream'));
+
           return new Response(body, {
             status: response.status,
             statusText: response.statusText,
@@ -72,7 +81,10 @@ globalScope.fetch = async (...args: Parameters<typeof fetch>): Promise<Response>
             ? combinedStream.pipeThrough(new DecompressionStream('gzip'))
             : combinedStream;
 
-          const contentType = pathname.endsWith('.wasm') ? 'application/wasm' : (responses[0].headers.get('content-type') || 'application/octet-stream');
+          const contentType = pathname.endsWith('.wasm')
+            ? 'application/wasm'
+            : (pathname.endsWith('.js') ? 'application/javascript' : (responses[0].headers.get('content-type') || 'application/octet-stream'));
+
           return new Response(body, {
             status: 200,
             statusText: 'OK',

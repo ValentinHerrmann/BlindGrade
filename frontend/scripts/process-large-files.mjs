@@ -32,9 +32,9 @@ async function processDirectory(dir) {
         const chunks = [];
 
         if (gzipped.length <= MAX_FILE_SIZE) {
-          const gzPath = fullPath + '.gz';
+          const gzPath = fullPath + '.bin';
           fs.writeFileSync(gzPath, gzipped);
-          chunks.push(relPath + '.gz');
+          chunks.push(relPath + '.bin');
           console.log(`  Created single gzip archive (${(gzipped.length / 1024 / 1024).toFixed(2)} MB): ${gzPath}`);
         } else {
           console.log(`  Gzipped size (${(gzipped.length / 1024 / 1024).toFixed(2)} MB) exceeds 24MB. Chunking into 20MB parts...`);
@@ -43,8 +43,8 @@ async function processDirectory(dir) {
           while (offset < gzipped.length) {
             const end = Math.min(offset + CHUNK_SIZE, gzipped.length);
             const chunkBuffer = gzipped.subarray(offset, end);
-            const partPath = `${fullPath}.gz.part${partIndex}`;
-            const partRelPath = `${relPath}.gz.part${partIndex}`;
+            const partPath = `${fullPath}.bin.part${partIndex}`;
+            const partRelPath = `${relPath}.bin.part${partIndex}`;
             
             fs.writeFileSync(partPath, chunkBuffer);
             chunks.push(partRelPath);
