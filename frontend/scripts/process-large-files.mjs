@@ -80,6 +80,35 @@ async function main() {
   console.log(`Scanning for files > 24MB in: ${absoluteTarget}`);
   await processDirectory(absoluteTarget);
 
+  const interceptorSource = path.resolve('scripts', 'fetch-interceptor.js');
+  const interceptorTarget = path.join(absoluteTarget, 'core', 'busytex', 'fetch-interceptor.js');
+  const interceptorStatic = path.resolve('static', 'core', 'busytex', 'fetch-interceptor.js');
+  
+  if (fs.existsSync(interceptorSource)) {
+    fs.mkdirSync(path.dirname(interceptorTarget), { recursive: true });
+    fs.copyFileSync(interceptorSource, interceptorTarget);
+    if (fs.existsSync(path.dirname(interceptorStatic))) {
+      fs.copyFileSync(interceptorSource, interceptorStatic);
+    }
+  }
+
+  const workerPath = path.join(absoluteTarget, 'core', 'busytex', 'busytex_worker.js');
+  if (fs.existsSync(workerPath)) {
+    const workerContent = fs.readFileSync(workerPath, 'utf-8');
+    if (!workerContent.includes("fetch-interceptor.js")) {
+      fs.writeFileSync(workerPath, "importScripts('fetch-interceptor.js');\n" + workerContent);
+      console.log(`Injected fetch-interceptor.js into ${workerPath}`);
+    }
+  }
+
+  const staticWorkerPath = path.resolve('static', 'core', 'busytex', 'busytex_worker.js');
+  if (fs.existsSync(staticWorkerPath)) {
+    const staticWorkerContent = fs.readFileSync(staticWorkerPath, 'utf-8');
+    if (!staticWorkerContent.includes("fetch-interceptor.js")) {
+      fs.writeFileSync(staticWorkerPath, "importScripts('fetch-interceptor.js');\n" + staticWorkerContent);
+    }
+  }
+
   const manifestPath = path.join(absoluteTarget, 'core', 'busytex', 'chunk-manifest.json');
   const manifestDir = path.dirname(manifestPath);
   if (!fs.existsSync(manifestDir)) {
