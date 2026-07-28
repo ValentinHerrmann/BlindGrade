@@ -1,3 +1,32 @@
+// Setup WASM fetch interceptor for gzipped WASM on Cloudflare Pages
+const globalScope: any = typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : globalThis);
+const originalFetch = globalScope.fetch;
+
+globalScope.fetch = async (...args: Parameters<typeof fetch>): Promise<Response> => {
+  const requestTarget = args[0];
+  const url = typeof requestTarget === 'string'
+    ? requestTarget
+    : (requestTarget && typeof requestTarget === 'object' && 'url' in requestTarget ? (requestTarget as any).url : String(requestTarget));
+
+  if (url && url.endsWith('busytex.wasm')) {
+    const response = await originalFetch(url + '.gz', args[1]);
+    if (response.ok) {
+      const ds = new DecompressionStream('gzip');
+      const decompressedStream = response.body ? response.body.pipeThrough(ds) : response.body;
+      return new Response(decompressedStream, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: {
+          ...Object.fromEntries(response.headers.entries()),
+          'Content-Type': 'application/wasm'
+        }
+      });
+    }
+  }
+
+  return originalFetch(...args);
+};
+
 import { BusyTexRunner, XeLatex, isPackageCached } from 'texlyre-busytex';
 
 let runner: BusyTexRunner | null = null;
