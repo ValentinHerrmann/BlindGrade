@@ -15,6 +15,7 @@ export default defineConfig({
   },
   optimizeDeps: {
     exclude: ['argon2-browser'],
+    include: ['texlyre-busytex'],
   },
   ssr: {
     external: ['argon2-browser'],
