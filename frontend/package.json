@@ -7,7 +7,7 @@
     "predev": "cp -r ../backend/latex-assets static/ && node scripts/generate-latex-assets-index.js",
     "dev": "vite dev",
     "prebuild": "cp -r ../backend/latex-assets static/ && node scripts/generate-latex-assets-index.js",
-    "build": "vite build",
+    "build": "vite build && node scripts/split-wasm.js",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
