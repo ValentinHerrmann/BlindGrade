@@ -21,6 +21,7 @@ interface WorkerSlot {
 const POOL_SIZE = 2;
 const pool: WorkerSlot[] = [];
 let msgIdCounter = 0;
+let compileQueue: Promise<any> = Promise.resolve();
 
 function acquireWorker(): WorkerSlot {
   let slot = pool.find(s => !s.busy);
@@ -32,45 +33,52 @@ function acquireWorker(): WorkerSlot {
       slot = { worker: w, busy: false };
       pool.push(slot);
     } else {
-      slot = pool[msgIdCounter % pool.length];
+      slot = pool[0];
     }
   }
   return slot;
 }
 
 async function compileLocalWasm(latexSource: string, onStatus?: (status: string) => void): Promise<CompileResult> {
-  const slot = acquireWorker();
-  const w = slot.worker;
-  slot.busy = true;
-  const id = ++msgIdCounter;
-  
-  return new Promise<CompileResult>((resolve, reject) => {
-    const listener = (e: MessageEvent) => {
-      if (e.data.id === id) {
-        if (e.data.status) {
-          if (onStatus) {
-            onStatus(e.data.status);
+  const runTask = async (): Promise<CompileResult> => {
+    const slot = acquireWorker();
+    const w = slot.worker;
+    slot.busy = true;
+    const id = ++msgIdCounter;
+    
+    try {
+      return await new Promise<CompileResult>((resolve, reject) => {
+        const listener = (e: MessageEvent) => {
+          if (e.data.id === id) {
+            if (e.data.status) {
+              if (onStatus) {
+                onStatus(e.data.status);
+              }
+            } else {
+              w.removeEventListener('message', listener);
+              if (e.data.success) {
+                resolve({
+                  pdfBytes: e.data.pdfBytes,
+                  usedFallback: false,
+                  engineUsed: 'local'
+                });
+              } else {
+                reject(new Error(e.data.error || "Local compilation failed"));
+              }
+            }
           }
-        } else {
-          w.removeEventListener('message', listener);
-          slot.busy = false;
-          if (e.data.success) {
-            resolve({
-              pdfBytes: e.data.pdfBytes,
-              usedFallback: false,
-              engineUsed: 'local'
-            });
-          } else {
-            reject(new Error(e.data.error || "Local compilation failed"));
-          }
-        }
-      }
-    };
-    w.addEventListener('message', listener);
-    w.postMessage({ id, latexSource });
-  }).finally(() => {
-    slot.busy = false;
-  });
+        };
+        w.addEventListener('message', listener);
+        w.postMessage({ id, latexSource });
+      });
+    } finally {
+      slot.busy = false;
+    }
+  };
+
+  const nextQueue = compileQueue.then(runTask, runTask);
+  compileQueue = nextQueue;
+  return nextQueue;
 }
 
 /**

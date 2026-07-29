@@ -425,26 +425,24 @@ ${exerciseInputs}
 
       const useLocal = $storagePolicyStore.latexCompilation === "local";
 
-      const [resAngabe, resLoesung] = await Promise.all([
-        compileLatex(fullTexAngabe, useLocal, (status) => {
-          if (status === 'downloading') {
-            compileNotice = "Loading local LaTeX compiler... (Downloading ~32MB on first load, please wait)";
-          } else if (status === 'compiling') {
-            compileNotice = "Compiling PDF...";
-          }
-        }, false),
-        compileLatex(fullTexLoesung, useLocal, undefined, false)
-      ]);
+      const resAngabe = await compileLatex(fullTexAngabe, useLocal, (status) => {
+        if (status === 'downloading') {
+          compileNotice = "Loading local LaTeX compiler... (Downloading ~32MB on first load, please wait)";
+        } else if (status === 'compiling') {
+          compileNotice = "Compiling PDF...";
+        }
+      }, false);
+
+      const blobAngabe = new Blob([resAngabe.pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
+      if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
+      previewPdfUrl = URL.createObjectURL(blobAngabe);
+
+      const resLoesung = await compileLatex(fullTexLoesung, useLocal, undefined, false);
+      const blobLoesung = new Blob([resLoesung.pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
+      if (previewSolutionPdfUrl) URL.revokeObjectURL(previewSolutionPdfUrl);
+      previewSolutionPdfUrl = URL.createObjectURL(blobLoesung);
 
       compileNotice = "";
-      const blobAngabe = new Blob([resAngabe.pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
-      const blobLoesung = new Blob([resLoesung.pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
-
-      if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
-      if (previewSolutionPdfUrl) URL.revokeObjectURL(previewSolutionPdfUrl);
-
-      previewPdfUrl = URL.createObjectURL(blobAngabe);
-      previewSolutionPdfUrl = URL.createObjectURL(blobLoesung);
     } catch (err: any) {
       errorMsg = `Preview failed: ${err.message || "Unknown compilation error"}`;
     } finally {

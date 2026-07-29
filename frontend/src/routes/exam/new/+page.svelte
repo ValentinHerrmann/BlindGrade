@@ -393,26 +393,24 @@ ${exerciseInputs}
         errorMsg = "Compiling PDF...";
       }
 
-      const [resAngabe, resLoesung] = await Promise.all([
-        compileLatex(fullTexAngabe, useLocal, (status) => {
-          if (status === 'downloading') {
-            errorMsg = "Loading local LaTeX compiler... (Downloading ~32MB on first load, please wait)";
-          } else if (status === 'compiling') {
-            errorMsg = "Compiling PDF...";
-          }
-        }, false),
-        compileLatex(fullTexLoesung, useLocal, undefined, false)
-      ]);
+      const resAngabe = await compileLatex(fullTexAngabe, useLocal, (status) => {
+        if (status === 'downloading') {
+          errorMsg = "Loading local LaTeX compiler... (Downloading ~32MB on first load, please wait)";
+        } else if (status === 'compiling') {
+          errorMsg = "Compiling PDF...";
+        }
+      }, false);
+
+      const blobAngabe = new Blob([resAngabe.pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
+      if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
+      previewPdfUrl = URL.createObjectURL(blobAngabe);
+
+      const resLoesung = await compileLatex(fullTexLoesung, useLocal, undefined, false);
+      const blobLoesung = new Blob([resLoesung.pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
+      if (previewSolutionPdfUrl) URL.revokeObjectURL(previewSolutionPdfUrl);
+      previewSolutionPdfUrl = URL.createObjectURL(blobLoesung);
 
       errorMsg = ""; // clear loading message
-      const blobAngabe = new Blob([resAngabe.pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
-      const blobLoesung = new Blob([resLoesung.pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
-
-      if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
-      if (previewSolutionPdfUrl) URL.revokeObjectURL(previewSolutionPdfUrl);
-
-      previewPdfUrl = URL.createObjectURL(blobAngabe);
-      previewSolutionPdfUrl = URL.createObjectURL(blobLoesung);
     } catch (err: any) {
       errorMsg = err.message || "Preview compilation failed.";
     } finally {

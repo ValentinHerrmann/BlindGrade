@@ -178,18 +178,14 @@
 
       const useLocal = $storagePolicyStore.latexCompilation === "local";
 
-      const [resAngabe, resLoesung] = await Promise.all([
-        compileLatex(fullTexAngabe, useLocal, undefined, false),
-        compileLatex(fullTexLoesung, useLocal, undefined, false)
-      ]);
-
+      const resAngabe = await compileLatex(fullTexAngabe, useLocal, undefined, false);
       const blobAngabe = new Blob([resAngabe.pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
-      const blobLoesung = new Blob([resLoesung.pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
-
       if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
-      if (previewSolutionPdfUrl) URL.revokeObjectURL(previewSolutionPdfUrl);
-
       previewPdfUrl = URL.createObjectURL(blobAngabe);
+
+      const resLoesung = await compileLatex(fullTexLoesung, useLocal, undefined, false);
+      const blobLoesung = new Blob([resLoesung.pdfBytes.buffer as ArrayBuffer], { type: "application/pdf" });
+      if (previewSolutionPdfUrl) URL.revokeObjectURL(previewSolutionPdfUrl);
       previewSolutionPdfUrl = URL.createObjectURL(blobLoesung);
     } catch (err: any) {
       console.error("Exercise preview failed:", err);
