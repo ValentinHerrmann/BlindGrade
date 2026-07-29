@@ -56,6 +56,9 @@ export async function syncLocalDataToServer(
     current++;
     progressCallback?.('Syncing exams', current, total);
     try {
+      const links = await db.examExercises.where('examId').equals(exam.id).sortBy('orderIndex');
+      const exerciseIds = links.map((l) => l.exerciseId);
+
       await api.post('/exams', {
         id: exam.id,
         title: exam.title || 'Unbenannte Prüfung',
@@ -67,6 +70,7 @@ export async function syncLocalDataToServer(
         lehrernachname: exam.lehrernachname,
         info_text: exam.infoText,
         latex_template: exam.latexTemplate,
+        exercise_ids: exerciseIds,
         retention_until: exam.retentionUntil || new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10),
       });
     } catch {

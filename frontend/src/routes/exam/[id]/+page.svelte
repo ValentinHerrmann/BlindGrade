@@ -17,6 +17,7 @@
     decryptExercise,
     decryptSubmission,
     decryptStudent,
+    encryptExercise,
   } from "$lib/db/dbEncryption";
   import { packProject } from "$lib/archive/packer";
   import { compileLatex } from "$lib/latex/compiler";
@@ -85,32 +86,28 @@
             questionType: e.question_type || "free_text",
             penalty: e.penalty || 0,
           }));
+          if (exercises.length > 0) {
+            const encExs = await Promise.all(exercises.map((ex: any) => encryptExercise(ex, key)));
+            await db.exercises.bulkPut(encExs);
+            const junctions = exercises.map((ex: any, idx: number) => ({
+              examId: id,
+              exerciseId: ex.id,
+              orderIndex: ex.orderIndex || (idx + 1),
+            }));
+            await db.examExercises.bulkPut(junctions);
+          } else {
+            const localExs = await loadExamExercisesEncrypted(id, key);
+            if (localExs.length > 0) {
+              exercises = localExs;
+            }
+          }
           isLocalFallback = false;
         } catch (serverErr) {
           // Fall back to IndexedDB if exam is not on server
           exam = (await loadExamEncrypted(id, key)) || null;
           if (exam) {
             isLocalFallback = true;
-            const links = await db.examExercises
-              .where("examId")
-              .equals(id)
-              .sortBy("orderIndex");
-            if (links.length > 0) {
-              exercises = [];
-              for (const link of links) {
-                const rawEx = await db.exercises.get(link.exerciseId);
-                if (rawEx) {
-                  const ex = await decryptExercise(rawEx, key);
-                  exercises.push({ ...ex, orderIndex: link.orderIndex });
-                }
-              }
-            } else {
-              const rawExs = await db.exercises
-                .where("examId")
-                .equals(id)
-                .toArray();
-              exercises = await Promise.all(rawExs.map(e => decryptExercise(e, key)));
-            }
+            exercises = await loadExamExercisesEncrypted(id, key);
           } else {
             console.error("Exam not found on server or locally:", serverErr);
           }
@@ -118,23 +115,7 @@
       } else {
         isLocalFallback = false;
         exam = (await loadExamEncrypted(id, key)) || null;
-        const links = await db.examExercises
-          .where("examId")
-          .equals(id)
-          .sortBy("orderIndex");
-        if (links.length > 0) {
-          exercises = [];
-          for (const link of links) {
-            const rawEx = await db.exercises.get(link.exerciseId);
-            if (rawEx) {
-              const ex = await decryptExercise(rawEx, key);
-              exercises.push({ ...ex, orderIndex: link.orderIndex });
-            }
-          }
-        } else {
-          const rawExs = await db.exercises.where("examId").equals(id).toArray();
-          exercises = await Promise.all(rawExs.map(e => decryptExercise(e, key)));
-        }
+        exercises = await loadExamExercisesEncrypted(id, key);
       }
       const rawSubs = await db.submissions.where("examId").equals(id).toArray();
       submissions = await Promise.all(rawSubs.map(s => decryptSubmission(s, key)));
@@ -259,6 +240,7 @@
     try {
       await db.exams.delete(exam.id);
       await db.exercises.where("examId").equals(exam.id).delete();
+      await db.examExercises.where("examId").equals(exam.id).delete();
       await db.submissions.where("examId").equals(exam.id).delete();
       await db.students.where("examId").equals(exam.id).delete();
 

@@ -146,6 +146,27 @@ export async function encryptExercise(exercise: ExerciseRecord, key: CryptoKey |
     const { ct, iv } = await encryptBytes(key, encoder.encode(jsonStr));
     payloadCt = ct;
     payloadIv = iv;
+
+    return {
+      id: exercise.id,
+      teacherId: exercise.teacherId,
+      examId: exercise.examId,
+      orderIndex: exercise.orderIndex,
+      maxPoints: exercise.maxPoints,
+      topicTag: exercise.topicTag,
+      grade: exercise.grade,
+      subject: exercise.subject,
+      version: exercise.version,
+      exerciseGroupId: exercise.exerciseGroupId,
+      variantKey: exercise.variantKey,
+      isCurrent: exercise.isCurrent,
+      createdAt: exercise.createdAt,
+      updatedAt: exercise.updatedAt,
+      questionType: exercise.questionType,
+      penalty: exercise.penalty,
+      payloadCt,
+      payloadIv,
+    };
   }
 
   return {
@@ -165,6 +186,11 @@ export async function encryptExercise(exercise: ExerciseRecord, key: CryptoKey |
     updatedAt: exercise.updatedAt,
     questionType: exercise.questionType,
     penalty: exercise.penalty,
+    title: exercise.title,
+    name: exercise.name,
+    latexBody: exercise.latexBody,
+    options: exercise.options,
+    correctAnswers: exercise.correctAnswers,
     payloadCt,
     payloadIv,
   };
@@ -188,6 +214,11 @@ export async function decryptExercise(exercise: ExerciseRecord, key: CryptoKey |
     updatedAt: exercise.updatedAt,
     questionType: exercise.questionType,
     penalty: exercise.penalty,
+    title: exercise.title,
+    name: exercise.name,
+    latexBody: exercise.latexBody,
+    options: exercise.options,
+    correctAnswers: exercise.correctAnswers,
     payloadCt: exercise.payloadCt,
     payloadIv: exercise.payloadIv,
   };
@@ -485,6 +516,18 @@ export async function loadExercisesEncrypted(key: CryptoKey | null): Promise<Exe
 }
 
 export async function loadExamExercisesEncrypted(examId: string, key: CryptoKey | null): Promise<ExerciseRecord[]> {
+  const links = await db.examExercises.where('examId').equals(examId).sortBy('orderIndex');
+  if (links.length > 0) {
+    const exercises: ExerciseRecord[] = [];
+    for (const link of links) {
+      const rawEx = await db.exercises.get(link.exerciseId);
+      if (rawEx) {
+        const ex = await decryptExercise(rawEx, key);
+        exercises.push({ ...ex, orderIndex: link.orderIndex });
+      }
+    }
+    return exercises;
+  }
   const rawExercises = await db.exercises.where('examId').equals(examId).toArray();
   return Promise.all(rawExercises.map((ex) => decryptExercise(ex, key)));
 }

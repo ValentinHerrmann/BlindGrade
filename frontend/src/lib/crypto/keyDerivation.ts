@@ -25,8 +25,11 @@ async function getArgon2(): Promise<any> {
     if (mod && typeof mod.hash === 'function') {
       return mod;
     }
+    if (typeof window !== 'undefined' && (window as any).argon2) {
+      return (window as any).argon2;
+    }
   } catch {
-    // Try main package export
+    // Try main package export as secondary fallback
   }
   try {
     // @ts-ignore

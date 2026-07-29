@@ -3,7 +3,14 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { packProject } from '../src/lib/archive/packer';
 import { unpackProject } from '../src/lib/archive/unpacker';
 import { db } from '../src/lib/db/db';
-import { saveExamEncrypted, saveStudentEncrypted, loadExamsEncrypted, loadStudentsEncrypted } from '../src/lib/db/dbEncryption';
+import {
+  saveExamEncrypted,
+  saveStudentEncrypted,
+  saveExerciseEncrypted,
+  loadExamsEncrypted,
+  loadStudentsEncrypted,
+  loadExamExercisesEncrypted,
+} from '../src/lib/db/dbEncryption';
 import { sessionStore } from '../src/lib/stores/session';
 import { eraseStudent } from '../src/lib/gdpr/erasure';
 import { checkRetention } from '../src/lib/gdpr/retention';
@@ -75,6 +82,47 @@ describe('.bgproj Archive Packer and Unpacker', () => {
     const restoredStudents = await loadStudentsEncrypted(testKey);
     expect(restoredStudents).toHaveLength(1);
     expect(restoredStudents[0].fallbackCode).toBe('A-X7K2M9');
+  });
+
+  it('preserves exercise-exam junction links on pack and unpack round-trip', async () => {
+    const examId = 'exam-uuid-2';
+    const exerciseId = 'exercise-uuid-1';
+
+    await saveExamEncrypted({
+      id: examId,
+      teacherId: 'teacher-1',
+      title: 'Physics Exam',
+      retentionUntil: '2027-12-31',
+      compilationStatus: 'compiled',
+      createdAt: new Date().toISOString(),
+    }, testKey);
+
+    await saveExerciseEncrypted({
+      id: exerciseId,
+      name: 'Kinematics Problem',
+      maxPoints: 10,
+    }, testKey);
+
+    await db.examExercises.put({
+      examId,
+      exerciseId,
+      orderIndex: 1,
+    });
+
+    const packedBytes = await packProject(testPassword);
+
+    await db.exams.clear();
+    await db.exercises.clear();
+    await db.examExercises.clear();
+
+    const result = await unpackProject(packedBytes, testPassword);
+    expect(result.examCount).toBe(1);
+
+    const restoredExercises = await loadExamExercisesEncrypted(examId, testKey);
+    expect(restoredExercises).toHaveLength(1);
+    expect(restoredExercises[0].id).toBe(exerciseId);
+    expect(restoredExercises[0].name).toBe('Kinematics Problem');
+    expect(restoredExercises[0].orderIndex).toBe(1);
   });
 
   it('guarantees nonce and salt freshness on every pack operation', async () => {

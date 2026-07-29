@@ -2,7 +2,7 @@
   import { isUnlocked, isAuthenticated, sessionStore } from '$lib/stores/session';
   import { db } from '$lib/db/db';
   import type { ExamRecord } from '$lib/db/schema';
-  import { loadExamsEncrypted, saveExamEncrypted, encryptExam } from '$lib/db/dbEncryption';
+  import { loadExamsEncrypted, saveExamEncrypted, encryptExam, encryptExercise } from '$lib/db/dbEncryption';
   import { unpackProject } from '$lib/archive/unpacker';
   import { clearAllTables } from '$lib/db/db';
   import { projectStore } from '$lib/stores/project';
@@ -87,6 +87,46 @@
 
         const encryptedExams = await Promise.all(exams.map((ex) => encryptExam(ex, key)));
         await db.exams.bulkPut(encryptedExams);
+
+        // Also sync remote exercises and junction records to IndexedDB for offline export
+        const remoteExercises: any[] = [];
+        const junctionRecords: any[] = [];
+        for (const e of remoteExamsRaw) {
+          if (Array.isArray(e.exercises)) {
+            for (let idx = 0; idx < e.exercises.length; idx++) {
+              const ex = e.exercises[idx];
+              const orderIndex = ex.order_index ?? (idx + 1);
+              remoteExercises.push({
+                id: ex.id,
+                teacherId: ex.teacher_id,
+                name: ex.name,
+                topicTag: ex.topic_tag,
+                grade: ex.grade,
+                subject: ex.subject,
+                latexBody: ex.latex_body,
+                maxPoints: ex.max_points,
+                version: ex.version || 1,
+                questionType: ex.question_type || 'free_text',
+                penalty: ex.penalty || 0,
+                exerciseGroupId: ex.exercise_group_id,
+                variantKey: ex.variant_key,
+                isCurrent: ex.is_current,
+              });
+              junctionRecords.push({
+                examId: e.id,
+                exerciseId: ex.id,
+                orderIndex,
+              });
+            }
+          }
+        }
+        if (remoteExercises.length > 0) {
+          const encExercises = await Promise.all(remoteExercises.map((ex) => encryptExercise(ex, key)));
+          await db.exercises.bulkPut(encExercises);
+        }
+        if (junctionRecords.length > 0) {
+          await db.examExercises.bulkPut(junctionRecords);
+        }
       } catch (apiErr) {
         console.warn('Failed to fetch remote exams, falling back to IDB:', apiErr);
         exams = localExams;
@@ -159,6 +199,7 @@
     if (!expiredExam) return;
     await db.exams.delete(expiredExam.exam.id);
     await db.exercises.where('examId').equals(expiredExam.exam.id).delete();
+    await db.examExercises.where('examId').equals(expiredExam.exam.id).delete();
     await db.submissions.where('examId').equals(expiredExam.exam.id).delete();
     await db.students.where('examId').equals(expiredExam.exam.id).delete();
     expiredExam = null;
