@@ -1,3 +1,4 @@
+// @ts-nocheck
 (function () {
   const globalScope = typeof window !== 'undefined' ? window : (typeof self !== 'undefined' ? self : globalThis);
   if (globalScope.__busytex_fetch_intercepted__) return;

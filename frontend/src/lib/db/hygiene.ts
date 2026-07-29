@@ -16,7 +16,7 @@
  * Encryption-at-rest is the PRIMARY protection. This wipe is a secondary UX layer.
  */
 
-import { db } from './db';
+import { clearAllTables } from './db';
 import { sessionStore } from '$lib/stores/session';
 import { storagePolicyStore } from '$lib/stores/storagePolicy';
 import { get } from 'svelte/store';
@@ -24,13 +24,7 @@ import { get } from 'svelte/store';
 /** Clear all IDB data. Returns true if successful, false on error. */
 export async function wipeDatabase(): Promise<boolean> {
   try {
-    await Promise.all([
-      db.exams.clear(),
-      db.exercises.clear(),
-      db.students.clear(),
-      db.submissions.clear(),
-      db.auditLog.clear(),
-    ]);
+    await clearAllTables();
     return true;
   } catch {
     // Intentionally silenced — wipe failure is non-fatal (data is encrypted-at-rest)

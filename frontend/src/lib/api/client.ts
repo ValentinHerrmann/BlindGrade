@@ -8,6 +8,9 @@
  * - On refresh failure: redirects to /unlock (login) page.
  */
 
+import { get } from 'svelte/store';
+import { sessionStore } from '$lib/stores/session';
+
 const BASE = '/api/v1';
 
 export class ApiError extends Error {
@@ -41,14 +44,21 @@ async function parseError(response: Response): Promise<ApiError> {
 let refreshPromise: Promise<void> | null = null;
 
 async function refreshToken(): Promise<void> {
-  const resp = await fetch(`${BASE}/auth/refresh`, {
-    method: 'POST',
-    credentials: 'include',
-  });
-  if (!resp.ok) {
-    // Redirect to unlock/login
-    window.location.href = '/unlock';
-    throw new ApiError(resp.status, 'ERR_SESSION_EXPIRED', 'Session expired');
+  try {
+    const resp = await fetch(`${BASE}/auth/refresh`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+    if (!resp.ok) {
+      const session = get(sessionStore);
+      if (session && session.email && typeof window !== 'undefined') {
+        window.location.href = '/unlock';
+      }
+      throw new ApiError(resp.status, 'ERR_SESSION_EXPIRED', 'Session expired');
+    }
+  } catch (err: any) {
+    if (err instanceof ApiError) throw err;
+    throw new ApiError(0, 'ERR_NETWORK', err?.message || 'Server unreachable');
   }
 }
 

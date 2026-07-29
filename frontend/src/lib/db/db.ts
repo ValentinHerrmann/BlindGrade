@@ -84,7 +84,7 @@ export class BlindGradeDB extends Dexie {
 }
 
 /** Singleton DB instance — import this everywhere. */
-export const db = browser ? new BlindGradeDB() : ({} as BlindGradeDB);
+export const db = (browser || typeof indexedDB !== 'undefined') ? new BlindGradeDB() : ({} as BlindGradeDB);
 
 /**
  * Checks for and migrates legacy 'Blindgrade' IndexedDB records if present.
@@ -121,8 +121,11 @@ export async function migrateLegacyDatabase(): Promise<void> {
  * Clears all Dexie IndexedDB tables.
  */
 export async function clearAllTables(): Promise<void> {
-  if (typeof indexedDB === 'undefined' || !db.isOpen()) return;
+  if (typeof indexedDB === 'undefined') return;
   try {
+    if (!db.isOpen()) {
+      await db.open();
+    }
     await Promise.all([
       db.exams.clear(),
       db.exercises.clear(),

@@ -26,7 +26,17 @@ async function getArgon2(): Promise<any> {
       return mod;
     }
   } catch {
-    // Ignore WASM load errors on non-browser targets
+    // Try main package export
+  }
+  try {
+    // @ts-ignore
+    const argon2Module = await import('argon2-browser');
+    const mod: any = (argon2Module as any).default || argon2Module;
+    if (mod && typeof mod.hash === 'function') {
+      return mod;
+    }
+  } catch {
+    // Ignore resolution errors
   }
   throw new Error('Argon2 library could not be resolved');
 }
@@ -59,8 +69,10 @@ export async function deriveKey(password: string, salt: Uint8Array): Promise<Cry
       hashLen: 32,
     });
     keyMaterial = result.hash;
-  } catch {
-    // Node.js test environment fallback: derive 32-byte key via Web Crypto PBKDF2
+  } catch (err: any) {
+    console.warn('[Crypto Warning] Argon2 WASM unavailable, falling back to WebCrypto PBKDF2:', err?.message || err);
+
+    // Fallback: derive 32-byte key via native Web Crypto PBKDF2
     const passKey = await crypto.subtle.importKey(
       'raw',
       new TextEncoder().encode(password),

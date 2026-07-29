@@ -125,6 +125,50 @@ describe('.bgproj Archive Packer and Unpacker', () => {
     tampered[tampered.length - 5] ^= 0xff;
     await expect(unpackProject(tampered, testPassword)).rejects.toThrow();
   });
+
+  it('wipes pre-existing database records when unpacking a new project', async () => {
+    // 1. Create Project A (Old data)
+    await saveExamEncrypted({
+      id: 'old-exam-id',
+      teacherId: 'teacher-1',
+      title: 'Old History Exam',
+      retentionUntil: '2025-01-01',
+      compilationStatus: 'compiled',
+      createdAt: new Date().toISOString(),
+    }, testKey);
+
+    // 2. Pack Project B (New data)
+    await db.exams.clear();
+    await saveExamEncrypted({
+      id: 'new-exam-id',
+      teacherId: 'teacher-1',
+      title: 'New Biology Exam',
+      retentionUntil: '2028-01-01',
+      compilationStatus: 'compiled',
+      createdAt: new Date().toISOString(),
+    }, testKey);
+    const newProjectPacked = await packProject(testPassword);
+
+    // 3. Put Old Exam back into DB to simulate pre-existing workspace state
+    await saveExamEncrypted({
+      id: 'old-exam-id',
+      teacherId: 'teacher-1',
+      title: 'Old History Exam',
+      retentionUntil: '2025-01-01',
+      compilationStatus: 'compiled',
+      createdAt: new Date().toISOString(),
+    }, testKey);
+
+    // 4. Unpack Project B with clearWorkspace = true (default)
+    const result = await unpackProject(newProjectPacked, testPassword);
+    expect(result.examCount).toBe(1);
+
+    // 5. Verify only Project B exists in DB, Project A was completely wiped
+    const currentExams = await loadExamsEncrypted(testKey);
+    expect(currentExams).toHaveLength(1);
+    expect(currentExams[0].id).toBe('new-exam-id');
+    expect(currentExams[0].title).toBe('New Biology Exam');
+  });
 });
 
 describe('GDPR Erasure & Retention', () => {

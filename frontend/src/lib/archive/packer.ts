@@ -116,6 +116,7 @@ export async function packProject(
     const payload = new TextEncoder().encode(
       JSON.stringify({
         pseudonym_id: st.pseudonymId,
+        exam_id: st.examId,
         fallback_code: st.fallbackCode,
         pii_ciphertext: Array.from(st.piiCt),
         iv: Array.from(st.piiIv),

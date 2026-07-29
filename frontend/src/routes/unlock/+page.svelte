@@ -60,6 +60,19 @@
       isLoading = false;
     }
   }
+
+  async function handleUnlockLocal() {
+    errorMsg = "";
+    isLoading = true;
+    try {
+      await sessionStore.initAnonymousSession();
+      await goto("/");
+    } catch (err: any) {
+      errorMsg = err?.message || "Failed to initialize local session.";
+    } finally {
+      isLoading = false;
+    }
+  }
 </script>
 
 <div class="unlock-container">
@@ -99,9 +112,20 @@
       </div>
 
       <button type="submit" class="submit-btn" class:is-loading={isLoading} disabled={isLoading}>
-        {isLoading ? "Authenticating..." : "Unlock Project"}
+        {isLoading ? "Authenticating..." : "Unlock with Server"}
       </button>
     </form>
+
+    <div class="divider"><span>OR</span></div>
+
+    <button
+      type="button"
+      class="local-unlock-btn"
+      on:click={handleUnlockLocal}
+      disabled={isLoading}
+    >
+      🛡️ Continue in Local / Offline Mode
+    </button>
   </div>
 </div>
 
@@ -220,6 +244,49 @@
   }
 
   .submit-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .divider {
+    display: flex;
+    align-items: center;
+    text-align: center;
+    margin: 1.25rem 0;
+    color: #64748b;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  .divider::before,
+  .divider::after {
+    content: '';
+    flex: 1;
+    border-bottom: 1px solid #334155;
+  }
+
+  .divider span {
+    padding: 0 0.75rem;
+  }
+
+  .local-unlock-btn {
+    width: 100%;
+    padding: 0.75rem;
+    background: #334155;
+    color: #f8fafc;
+    border: 1px solid #475569;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+  }
+
+  .local-unlock-btn:hover {
+    background: #475569;
+  }
+
+  .local-unlock-btn:disabled {
     opacity: 0.6;
     cursor: not-allowed;
   }

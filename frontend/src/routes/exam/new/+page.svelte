@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { db } from "$lib/db/db";
-  import { sessionStore } from "$lib/stores/session";
+  import { sessionStore, isAuthenticated } from "$lib/stores/session";
   import { storagePolicyStore } from "$lib/stores/storagePolicy";
   import type { ExerciseRecord } from "$lib/db/schema";
   import { loadExercisesEncrypted, saveExerciseEncrypted, saveExamEncrypted, encryptExercise } from "$lib/db/dbEncryption";
@@ -223,7 +223,7 @@ Frage hier eingeben... \\BE
   async function loadLibrary() {
     const key = get(sessionStore).sessionKey;
     try {
-      if ($storagePolicyStore.examAndExerciseStorage === "server") {
+      if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === "server") {
         try {
           const remoteExs = (await api.get("/exercises")) as any[];
           libraryExercises = remoteExs.map((e: any) => ({
@@ -322,7 +322,7 @@ Frage hier eingeben... \\BE
     if (saveCustomToLibrary) {
       const key = get(sessionStore).sessionKey;
       await saveExerciseEncrypted(newEx, key);
-      if ($storagePolicyStore.examAndExerciseStorage === "server") {
+      if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === "server") {
         try {
           await api.post("/exercises", {
             id: newEx.id,

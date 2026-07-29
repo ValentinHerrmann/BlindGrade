@@ -56,7 +56,7 @@
   async function loadExam(id: string) {
     const key = get(sessionStore).sessionKey;
     try {
-      if ($storagePolicyStore.examAndExerciseStorage === "server") {
+      if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === "server") {
         try {
           const remoteExam = (await api.get(`/exams/${id}`)) as any;
           exam = {
@@ -262,7 +262,7 @@
       await db.submissions.where("examId").equals(exam.id).delete();
       await db.students.where("examId").equals(exam.id).delete();
 
-      if ($storagePolicyStore.examAndExerciseStorage === "server") {
+      if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === "server") {
         try {
           await api.delete(`/exams/${exam.id}`);
         } catch (e) {
@@ -315,7 +315,7 @@
     compileNotice = "Compiling PDF...";
 
     try {
-      if ($storagePolicyStore.examAndExerciseStorage === "server") {
+      if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === "server") {
         const pdfBuffer = await api.getBinary(
           `/exams/${exam.id}/compile?answers=${showAnswers}`,
         );
@@ -561,7 +561,7 @@ ${exerciseInputs}
   async function handleSaveMetadata() {
     if (!exam) return;
     try {
-      if ($storagePolicyStore.examAndExerciseStorage === "server") {
+      if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === "server") {
         await api.patch(`/exams/${exam.id}`, {
           title: editTitle,
           testart: editTestart,
@@ -597,7 +597,7 @@ ${exerciseInputs}
   async function openLibraryModal() {
     const key = get(sessionStore).sessionKey;
     try {
-      if ($storagePolicyStore.examAndExerciseStorage === "server") {
+      if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === "server") {
         const remoteExs = (await api.get("/exercises")) as any[];
         libraryExercises = remoteExs.map((e: any) => ({
           id: e.id,

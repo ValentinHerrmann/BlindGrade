@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { db } from "$lib/db/db";
-  import { sessionStore } from "$lib/stores/session";
+  import { sessionStore, isAuthenticated } from "$lib/stores/session";
   import { storagePolicyStore } from "$lib/stores/storagePolicy";
   import type { ExerciseRecord } from "$lib/db/schema";
   import { loadExercisesEncrypted, saveExerciseEncrypted, encryptExercise } from "$lib/db/dbEncryption";
@@ -495,7 +495,7 @@
     errorMsg = "";
     const key = get(sessionStore).sessionKey;
     try {
-      if ($storagePolicyStore.examAndExerciseStorage === "server") {
+      if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === "server") {
         try {
           const remoteExs = (await api.get("/exercises")) as any[];
           exercises = remoteExs.map((e: any) => ({
@@ -600,7 +600,7 @@
     isDeleteLoading = true;
     isDeleteModalOpen = true;
 
-    if ($storagePolicyStore.examAndExerciseStorage === "server") {
+    if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === "server") {
       try {
         const usage = (await api.get(`/exercises/${ex.id}/usage`)) as any;
         deleteUsageInfo = {
@@ -620,7 +620,7 @@
   async function handleConfirmDelete() {
     if (!deletingExercise) return;
     try {
-      if ($storagePolicyStore.examAndExerciseStorage === "server") {
+      if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === "server") {
         await api.delete(`/exercises/${deletingExercise.id}`);
       }
       await db.exercises.delete(deletingExercise.id);
@@ -636,7 +636,7 @@
     let groupExs: ExerciseRecord[] = [];
     const key = get(sessionStore).sessionKey;
 
-    if ($storagePolicyStore.examAndExerciseStorage === "server") {
+    if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === "server") {
       try {
         if (ex.exerciseGroupId) {
           const remoteExs = (await api.get(`/exercises?group_id=${ex.exerciseGroupId}&current_only=false`)) as any[];
@@ -708,7 +708,7 @@
       const updatedMaxPoints = parseExerciseScore(diffLeftLatex);
       const key = get(sessionStore).sessionKey;
 
-      if ($storagePolicyStore.examAndExerciseStorage === "server") {
+      if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === "server") {
         await api.patch(`/exercises/${diffLeftEx.id}`, {
           latex_body: diffLeftLatex,
           max_points: updatedMaxPoints,
@@ -739,7 +739,7 @@
       const updatedMaxPoints = parseExerciseScore(diffRightLatex);
       const key = get(sessionStore).sessionKey;
 
-      if ($storagePolicyStore.examAndExerciseStorage === "server") {
+      if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === "server") {
         await api.patch(`/exercises/${diffRightEx.id}`, {
           latex_body: diffRightLatex,
           max_points: updatedMaxPoints,

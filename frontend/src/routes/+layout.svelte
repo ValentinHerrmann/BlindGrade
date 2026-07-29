@@ -4,6 +4,7 @@
   import { get } from "svelte/store";
   import { registerHygieneListeners, lockSession } from "$lib/db/hygiene";
   import { db, clearAllTables } from "$lib/db/db";
+  import { projectStore } from "$lib/stores/project";
   import { sessionStore, isUnlocked, isAuthenticated } from "$lib/stores/session";
   import {
     storagePolicyStore,
@@ -63,6 +64,7 @@
     try {
       const buffer = new Uint8Array(await file.arrayBuffer());
       await clearAllTables();
+      projectStore.clear();
       await unpackProject(buffer, password);
       alert("Successfully imported project archive!");
       window.location.href = "/";
@@ -104,6 +106,7 @@
 
     try {
       await clearAllTables();
+      projectStore.clear();
       alert("Workspace cleared successfully.");
       window.location.href = "/";
     } catch (err: any) {

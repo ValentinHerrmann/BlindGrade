@@ -17,8 +17,9 @@ import {
 } from './format';
 import { deriveKey } from '$lib/crypto/keyDerivation';
 import { deriveSessionKey } from '$lib/crypto/sessionKey';
-import { db } from '$lib/db/db';
+import { db, clearAllTables } from '$lib/db/db';
 import { sessionStore } from '$lib/stores/session';
+import { projectStore } from '$lib/stores/project';
 import {
   encryptExam,
   encryptExercise,
@@ -44,11 +45,13 @@ export interface UnpackResult {
  * @param fileBytes Raw bytes of the .bgproj file.
  * @param password Teacher's password to re-derive key from header salt.
  * @param onProgress Progress event callback.
+ * @param clearWorkspace Whether to wipe existing workspace data before importing (default: true).
  */
 export async function unpackProject(
   fileBytes: Uint8Array,
   password: string,
-  onProgress?: (e: ProgressEventData) => void
+  onProgress?: (e: ProgressEventData) => void,
+  clearWorkspace = true
 ): Promise<UnpackResult> {
   onProgress?.({ stage: 'unpacking', current: 0, total: 100 });
 
@@ -164,7 +167,7 @@ export async function unpackProject(
         const raw = JSON.parse(payloadStr);
         students.push({
           pseudonymId: raw.pseudonym_id,
-          examId: raw.exam_id || raw.examId,
+          examId: raw.exam_id || raw.examId || '',
           fallbackCode: raw.fallback_code,
           piiCt: new Uint8Array(raw.pii_ciphertext),
           piiIv: new Uint8Array(raw.iv),
@@ -214,8 +217,23 @@ export async function unpackProject(
     );
   }
 
+  // Clear workspace before importing verified records into Dexie IDB
+  if (clearWorkspace) {
+    await clearAllTables();
+    projectStore.clear();
+  }
+
   // 9. Import verified records into Dexie IDB
-  const key = get(sessionStore).sessionKey;
+  let key = get(sessionStore).sessionKey;
+  if (!key) {
+    await sessionStore.initAnonymousSession();
+    key = get(sessionStore).sessionKey;
+  }
+
+  if (!key) {
+    throw new Error('Failed to initialize session encryption key for IndexedDB import.');
+  }
+
   const encExams = await Promise.all(exams.map((e) => encryptExam(e, key)));
   const encExercises = await Promise.all(exercises.map((e) => encryptExercise(e, key)));
   const encStudents = await Promise.all(students.map((st) => encryptStudent(st, key)));

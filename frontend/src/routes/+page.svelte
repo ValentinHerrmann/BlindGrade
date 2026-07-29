@@ -1,19 +1,23 @@
 <script lang="ts">
-  import { isUnlocked, sessionStore } from '$lib/stores/session';
+  import { isUnlocked, isAuthenticated, sessionStore } from '$lib/stores/session';
   import { db } from '$lib/db/db';
   import type { ExamRecord } from '$lib/db/schema';
-  import { loadExamsEncrypted, saveExamEncrypted } from '$lib/db/dbEncryption';
+  import { loadExamsEncrypted, saveExamEncrypted, encryptExam } from '$lib/db/dbEncryption';
   import { unpackProject } from '$lib/archive/unpacker';
+  import { clearAllTables } from '$lib/db/db';
+  import { projectStore } from '$lib/stores/project';
   import { checkRetention, type RetentionCheckResult } from '$lib/gdpr/retention';
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
 
   import { storagePolicyStore } from '$lib/stores/storagePolicy';
   import { api } from '$lib/api/client';
+  import { syncLocalDataToServer } from '$lib/services/migrationService';
 
   let exams: ExamRecord[] = [];
   let isImporting = false;
   let importStatus = '';
+  let isInitializing = true;
   let expiredExam: { exam: ExamRecord; check: RetentionCheckResult } | null = null;
 
   let searchQuery = '';
@@ -42,18 +46,24 @@
   });
 
   onMount(async () => {
-    if (!$isUnlocked) {
-      await sessionStore.initAnonymousSession();
+    try {
+      if (!$isUnlocked) {
+        await sessionStore.initAnonymousSession();
+      }
+      await refreshExams();
+    } finally {
+      isInitializing = false;
     }
-    await refreshExams();
   });
 
   async function refreshExams() {
     const key = get(sessionStore).sessionKey;
-    if ($storagePolicyStore.examAndExerciseStorage === 'server') {
+    const localExams = await loadExamsEncrypted(key);
+
+    if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === 'server') {
       try {
-        const remoteExams = (await api.get('/exams')) as any[];
-        exams = remoteExams.map((e: any) => ({
+        const remoteExamsRaw = (await api.get('/exams')) as any[];
+        const remoteExams: ExamRecord[] = remoteExamsRaw.map((e: any) => ({
           id: e.id,
           teacherId: e.teacher_id,
           title: e.title,
@@ -69,14 +79,20 @@
           retentionUntil: e.retention_until || '',
           createdAt: e.created_at || new Date().toISOString(),
         }));
-        const encryptedExams = await Promise.all(exams.map((ex) => saveExamEncrypted(ex, key)));
+
+        // Merge remote and local exams (preserve local IDB exams not yet on server)
+        const remoteIds = new Set(remoteExams.map((e) => e.id));
+        const localOnlyExams = localExams.filter((e) => !remoteIds.has(e.id));
+        exams = [...remoteExams, ...localOnlyExams];
+
+        const encryptedExams = await Promise.all(exams.map((ex) => encryptExam(ex, key)));
         await db.exams.bulkPut(encryptedExams);
       } catch (apiErr) {
         console.warn('Failed to fetch remote exams, falling back to IDB:', apiErr);
-        exams = await loadExamsEncrypted(key);
+        exams = localExams;
       }
     } else {
-      exams = await loadExamsEncrypted(key);
+      exams = localExams;
     }
 
     for (const exam of exams) {
@@ -103,9 +119,21 @@
 
     try {
       const buffer = new Uint8Array(await file.arrayBuffer());
+      await clearAllTables();
+      projectStore.clear();
       const res = await unpackProject(buffer, password, (p) => {
         importStatus = `Status: ${p.stage} (${p.current}%)`;
       });
+
+      if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === 'server') {
+        try {
+          importStatus = 'Syncing imported data to server...';
+          await syncLocalDataToServer();
+        } catch (syncErr) {
+          console.warn('Post-import server sync skipped or failed:', syncErr);
+        }
+      }
+
       alert(`Import successful! Loaded ${res.examCount} exam(s) and ${res.submissionCount} submission(s).`);
       await refreshExams();
     } catch (err: any) {
@@ -139,7 +167,11 @@
 </script>
 
 <div class="dashboard">
-  {#if !$isUnlocked}
+  {#if isInitializing}
+    <div class="loading-state">
+      <p>Initializing local session...</p>
+    </div>
+  {:else if !$isUnlocked}
     <div class="locked-state">
       <h2>Session Locked</h2>
       <p>Please unlock your session to access projects.</p>

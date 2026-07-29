@@ -3,7 +3,7 @@
   import { get } from "svelte/store";
   import type { ExerciseRecord } from "$lib/db/schema";
   import { db } from "$lib/db/db";
-  import { sessionStore } from "$lib/stores/session";
+  import { sessionStore, isAuthenticated } from "$lib/stores/session";
   import { storagePolicyStore } from "$lib/stores/storagePolicy";
   import { saveExerciseEncrypted } from "$lib/db/dbEncryption";
   import { api } from "$lib/api/client";
@@ -212,7 +212,7 @@
     try {
       if (isCreatingVersion && versionBaseEx) {
         let savedEx: ExerciseRecord;
-        if ($storagePolicyStore.examAndExerciseStorage === "server") {
+        if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === "server") {
           const res = (await api.post(`/exercises/${versionBaseEx.id}/new-version`, {
             name: editorName,
             topic_tag: editorTopicTag,
@@ -292,7 +292,7 @@
 
       await saveExerciseEncrypted(record, key);
 
-      if ($storagePolicyStore.examAndExerciseStorage === "server") {
+      if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === "server") {
         try {
           if (editingExercise) {
             await api.patch(`/exercises/${id}`, {
