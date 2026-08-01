@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "predev": "cp -r ../backend/latex-assets static/ && node scripts/generate-latex-assets-index.js",
+    "predev": "npx texlyre-busytex download-assets static/core && node scripts/process-large-files.mjs static && cp -r ../backend/latex-assets static/ && node scripts/generate-latex-assets-index.js",
     "dev": "vite dev",
-    "prebuild": "cp -r ../backend/latex-assets static/ && node scripts/generate-latex-assets-index.js",
+    "prebuild": "npx texlyre-busytex download-assets static/core && node scripts/process-large-files.mjs static && cp -r ../backend/latex-assets static/ && node scripts/generate-latex-assets-index.js",
     "build": "vite build && npm run process-large-files",
     "process-large-files": "node scripts/process-large-files.mjs build",
     "preview": "vite preview",

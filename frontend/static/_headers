@@ -1,0 +1,8 @@
+/core/busytex/*.wasm
+  Content-Type: application/wasm
+
+/core/busytex/*.wasm.bin
+  Content-Type: application/wasm
+
+/wasm/*.wasm
+  Content-Type: application/wasm

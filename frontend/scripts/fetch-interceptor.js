@@ -11,9 +11,12 @@
     if (!chunkManifestPromise) {
       chunkManifestPromise = originalFetch('/core/busytex/chunk-manifest.json')
         .then(async (res) => {
-          const contentType = res.headers.get('content-type') || '';
-          if (res.ok && contentType.includes('application/json')) {
-            return await res.json();
+          if (res.ok) {
+            try {
+              return await res.json();
+            } catch {
+              return {};
+            }
           }
           return {};
         })
@@ -95,6 +98,18 @@
           }
         }
       }
+
+      const res = await originalFetch(...args);
+      if (res.ok && (pathname.endsWith('.wasm') || pathname.endsWith('.wasm.bin'))) {
+        const headers = new Headers(res.headers);
+        headers.set('Content-Type', 'application/wasm');
+        return new Response(res.body, {
+          status: res.status,
+          statusText: res.statusText,
+          headers: headers
+        });
+      }
+      return res;
     } catch (err) {
       // Fall through to originalFetch on error
     }

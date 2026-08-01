@@ -15,7 +15,12 @@ async function initRunner(onStatus: (status: string) => void) {
     
     let allCached = true;
     for (const pkg of packages) {
-      if (!(await isPackageCached(pkg))) {
+      try {
+        if (!(await isPackageCached(pkg))) {
+          allCached = false;
+          break;
+        }
+      } catch {
         allCached = false;
         break;
       }

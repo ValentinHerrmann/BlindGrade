@@ -110,6 +110,23 @@ async function main() {
   }
 
   const manifestPath = path.join(absoluteTarget, 'core', 'busytex', 'chunk-manifest.json');
+  if (fs.existsSync(manifestPath)) {
+    try {
+      const existingManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+      for (const [key, value] of Object.entries(existingManifest)) {
+        if (value && Array.isArray(value.chunks) && value.chunks.length > 0) {
+          const allChunksExist = value.chunks.every((chunkRelPath) => {
+            const chunkFullPath = path.join(absoluteTarget, chunkRelPath.replace(/^\//, ''));
+            return fs.existsSync(chunkFullPath);
+          });
+          if (allChunksExist && !manifest[key]) {
+            manifest[key] = value;
+          }
+        }
+      }
+    } catch {}
+  }
+
   const manifestDir = path.dirname(manifestPath);
   if (!fs.existsSync(manifestDir)) {
     fs.mkdirSync(manifestDir, { recursive: true });
