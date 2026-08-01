@@ -98,10 +98,14 @@ export const examRepository = {
   },
 
   async delete(id: string): Promise<void> {
+    await db.exams.delete(id);
+    await db.exercises.where('examId').equals(id).delete();
+    await db.examExercises.where('examId').equals(id).delete();
+    await db.submissions.where('examId').equals(id).delete();
+    await db.students.where('examId').equals(id).delete();
+
     const policy = get(storagePolicyStore);
-    if (policy.storageMode === 'all-local') {
-      await db.exams.delete(id);
-    } else {
+    if (policy.storageMode !== 'all-local') {
       try {
         await api.delete(`/exams/${id}`);
       } catch (err: any) {
@@ -110,3 +114,4 @@ export const examRepository = {
     }
   },
 };
+

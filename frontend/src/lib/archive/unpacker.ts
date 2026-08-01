@@ -243,6 +243,8 @@ export async function unpackProject(
   for (const ex of exercises) await exerciseRepository.save(ex, key);
   for (const st of students) await studentRepository.save(st, key);
   for (const sub of submissions) await submissionRepository.save(sub, key);
+  if (examExercises.length > 0) await db.examExercises.bulkPut(examExercises);
+
 
 
   onProgress?.({ stage: 'complete', current: 100, total: 100 });

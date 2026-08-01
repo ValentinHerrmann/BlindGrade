@@ -12,6 +12,8 @@
 
   import { storagePolicyStore } from '$lib/stores/storagePolicy';
   import { api } from '$lib/api/client';
+  import { examRepository } from '$lib/repositories/examRepository';
+  import { offlineQueue } from '$lib/services/offlineQueue';
 
 
   let exams: ExamRecord[] = [];
@@ -80,13 +82,31 @@
           createdAt: e.created_at || new Date().toISOString(),
         }));
 
-        // Merge remote and local exams (preserve local IDB exams not yet on server)
+        // Check offline queue for pending exam creations
+        const pendingQueue = get(offlineQueue);
+        const pendingExamIds = new Set(
+          pendingQueue
+            .filter((req) => req.url === '/exams' && req.method === 'POST' && req.body?.id)
+            .map((req) => req.body.id)
+        );
+
+        // Merge remote and local exams (preserve only local IDB exams pending offline sync)
         const remoteIds = new Set(remoteExams.map((e) => e.id));
-        const localOnlyExams = localExams.filter((e) => !remoteIds.has(e.id));
-        exams = [...remoteExams, ...localOnlyExams];
+        const pendingLocalExams = localExams.filter((e) => !remoteIds.has(e.id) && pendingExamIds.has(e.id));
+        const deletedStaleExams = localExams.filter((e) => !remoteIds.has(e.id) && !pendingExamIds.has(e.id));
+
+        // Purge deleted/stale exams from local IDB
+        for (const stale of deletedStaleExams) {
+          await db.exams.delete(stale.id);
+          await db.exercises.where('examId').equals(stale.id).delete();
+          await db.examExercises.where('examId').equals(stale.id).delete();
+        }
+
+        exams = [...remoteExams, ...pendingLocalExams];
 
         const encryptedExams = await Promise.all(exams.map((ex) => encryptExam(ex, key)));
         await db.exams.bulkPut(encryptedExams);
+
 
         // Also sync remote exercises and junction records to IndexedDB for offline export
         const remoteExercises: any[] = [];
@@ -198,6 +218,16 @@
     expiredExam = null;
     await refreshExams();
   }
+
+  async function handleDeleteDashboardExam(id: string, title?: string) {
+    if (!confirm(`Are you sure you want to delete exam "${title || 'Untitled'}"?`)) return;
+    try {
+      await examRepository.delete(id);
+      await refreshExams();
+    } catch (err: any) {
+      alert(`Delete failed: ${err.message}`);
+    }
+  }
 </script>
 
 <div class="dashboard">
@@ -306,6 +336,7 @@
               <p class="date">Retention until: {exam.retentionUntil}</p>
               <div class="actions">
                 <a href="/exam/{exam.id}">Open Exam</a>
+                <button class="card-delete-btn" on:click={() => handleDeleteDashboardExam(exam.id, exam.title)}>Delete</button>
               </div>
             </div>
           {/each}
@@ -314,6 +345,7 @@
     {/if}
   {/if}
 </div>
+
 
 
 <style>
@@ -535,9 +567,30 @@
     margin-bottom: 1rem;
   }
 
+  .exam-card .actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
   .exam-card .actions a {
     color: #38bdf8;
     text-decoration: none;
     font-weight: 500;
+  }
+
+  .card-delete-btn {
+    background: transparent;
+    color: #ef4444;
+    border: 1px solid #ef4444;
+    padding: 0.25rem 0.625rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+
+  .card-delete-btn:hover {
+    background: #ef4444;
+    color: white;
   }
 </style>

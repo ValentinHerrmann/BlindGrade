@@ -109,6 +109,7 @@
             isLocalFallback = true;
             exercises = await loadExamExercisesEncrypted(id, key);
           } else {
+            errorMsg = "Exam not found or has been deleted from server.";
             console.error("Exam not found on server or locally:", serverErr);
           }
         }

@@ -65,7 +65,8 @@ export const exerciseRepository = {
   async getByExamId(examId: string, key: CryptoKey | null): Promise<ExerciseRecord[]> {
     const policy = get(storagePolicyStore);
     if (policy.storageMode === 'all-local') {
-      const links = await db.examExercises.where('examId').equals(examId).sortBy('orderIndex');
+      const links = await db.examExercises.where('examId').equals(examId).toArray();
+      links.sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
       if (links.length > 0) {
         const exercises: ExerciseRecord[] = [];
         for (const link of links) {
@@ -84,8 +85,24 @@ export const exerciseRepository = {
         const rawList = await api.get<any[]>(`/exams/${examId}/exercises`);
         return rawList.map(mapApiToExerciseRecord);
       } catch (err: any) {
+        const links = await db.examExercises.where('examId').equals(examId).toArray();
+        links.sort((a, b) => (a.orderIndex || 0) - (b.orderIndex || 0));
+        if (links.length > 0) {
+          const exercises: ExerciseRecord[] = [];
+          for (const link of links) {
+            const rawEx = await db.exercises.get(link.exerciseId);
+            if (rawEx) {
+              const ex = await decryptExercise(rawEx, key);
+              exercises.push({ ...ex, orderIndex: link.orderIndex });
+            }
+          }
+          return exercises;
+        }
         const raw = await db.exercises.where('examId').equals(examId).toArray();
-        return Promise.all(raw.map((ex) => decryptExercise(ex, key)));
+        if (raw.length > 0) {
+          return Promise.all(raw.map((ex) => decryptExercise(ex, key)));
+        }
+        return [];
       }
     }
   },

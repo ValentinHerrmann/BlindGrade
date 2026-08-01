@@ -63,6 +63,12 @@ async def test_exam_crud_flow(client: AsyncClient, db: AsyncSession) -> None:
     assert get_resp.status_code == 200
     assert get_resp.json()["title"] == "Algorithms 101"
 
+    # Get exam exercises
+    ex_resp = await client.get(f"/api/v1/exams/{exam_id}/exercises")
+    assert ex_resp.status_code == 200
+    assert len(ex_resp.json()) == 2
+
+
     # List exams
     list_resp = await client.get("/api/v1/exams")
     assert list_resp.status_code == 200

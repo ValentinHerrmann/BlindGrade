@@ -199,6 +199,17 @@ async def get_exam(
     return _to_exam_response(exam, exs)
 
 
+@router.get("/{exam_id}/exercises", response_model=list[ExerciseResponse])
+async def list_exam_exercises(
+    exam: Exam = Depends(get_exam_for_teacher),
+    db: AsyncSession = Depends(get_db),
+) -> list[ExerciseResponse]:
+    """Get exercises linked to a specific exam."""
+    exs = await _fetch_exam_exercises(exam.id, db)
+    return [_to_exercise_response(ex, idx) for ex, idx in exs]
+
+
+
 @router.patch("/{exam_id}", response_model=ExamResponse)
 async def update_exam(
     body: ExamUpdate,
