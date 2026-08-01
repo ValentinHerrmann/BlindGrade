@@ -52,15 +52,22 @@ function getInitialPolicy(): StoragePolicy {
         if (saved) {
             try {
                 const parsed = JSON.parse(saved);
-                if (parsed.storageMode && parsed.latexCompilation) {
-                    return parsed;
-                }
-                // Migration from legacy policy structure
-                if (parsed.examAndExerciseStorage === 'server' && parsed.resultsAndStudentsData === 'server') {
-                    return { storageMode: 'all-server', latexCompilation: parsed.latexCompilation || 'local' };
+                let storageMode: StorageMode = DEFAULT_POLICY.storageMode;
+                let latexCompilation: 'server' | 'local' = DEFAULT_POLICY.latexCompilation;
+
+                if (parsed.storageMode === 'all-server' || parsed.storageMode === 'all-local' || parsed.storageMode === 'hybrid') {
+                    storageMode = parsed.storageMode;
+                } else if (parsed.examAndExerciseStorage === 'server' && parsed.resultsAndStudentsData === 'server') {
+                    storageMode = 'all-server';
                 } else if (parsed.examAndExerciseStorage === 'server' && parsed.resultsAndStudentsData === 'local') {
-                    return { storageMode: 'hybrid', latexCompilation: parsed.latexCompilation || 'local' };
+                    storageMode = 'hybrid';
                 }
+
+                if (parsed.latexCompilation === 'server' || parsed.latexCompilation === 'local') {
+                    latexCompilation = parsed.latexCompilation;
+                }
+
+                return { storageMode, latexCompilation };
             } catch {
                 return DEFAULT_POLICY;
             }

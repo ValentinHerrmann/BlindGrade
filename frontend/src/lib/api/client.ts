@@ -10,8 +10,15 @@
 
 import { get } from 'svelte/store';
 import { sessionStore } from '$lib/stores/session';
+import { backendStore } from '$lib/stores/backendStore';
 
-const BASE = '/api/v1';
+function getBaseUrl(): string {
+  const url = get(backendStore);
+  if (!url) {
+    throw new ApiError(0, 'ERR_NO_SERVER_URL', 'Backend server address is not configured. Please enter a server address.');
+  }
+  return `${url.replace(/\/$/, '')}/api/v1`;
+}
 
 export class ApiError extends Error {
   constructor(
@@ -45,7 +52,7 @@ let refreshPromise: Promise<void> | null = null;
 
 async function refreshToken(): Promise<void> {
   try {
-    const resp = await fetch(`${BASE}/auth/refresh`, {
+    const resp = await fetch(`${getBaseUrl()}/auth/refresh`, {
       method: 'POST',
       credentials: 'include',
     });
@@ -81,7 +88,7 @@ async function request<T>(
     }
   }
 
-  const resp = await fetch(`${BASE}${path}`, {
+  const resp = await fetch(`${getBaseUrl()}${path}`, {
     method,
     headers,
     body: bodyInit,
@@ -98,7 +105,7 @@ async function request<T>(
     await refreshPromise;
 
     // Retry original request after refresh
-    const retryResp = await fetch(`${BASE}${path}`, {
+    const retryResp = await fetch(`${getBaseUrl()}${path}`, {
       method,
       headers,
       body: bodyInit,

@@ -11,10 +11,21 @@
     storagePolicyLabelStore,
     storagePolicyBadgeStore,
   } from "$lib/stores/storagePolicy";
+  import { backendStore, effectiveBackendStore } from "$lib/stores/backendStore";
   import { packProject } from "$lib/archive/packer";
   import { unpackProject } from "$lib/archive/unpacker";
+  import StoragePolicyModal from "$lib/components/StoragePolicyModal.svelte";
 
   let fileInput: HTMLInputElement;
+  let isSettingsModalOpen = false;
+
+  function handleFooterClick() {
+    if (get(isUnlocked)) {
+      isSettingsModalOpen = true;
+    } else {
+      window.location.href = "/unlock";
+    }
+  }
 
   onMount(async () => {
     registerHygieneListeners();
@@ -172,17 +183,33 @@
   </main>
 
   <footer class="vscode-statusbar">
-    <a
-      href={$isUnlocked ? "/settings#storage-policy" : "/unlock"}
+    <button
+      type="button"
+      on:click={handleFooterClick}
       class="statusbar-item"
       title={$isUnlocked
-        ? `Click to change data storage mode: ${$storagePolicyLabelStore}`
+        ? `Click to change storage & privacy settings`
         : "Session locked — Click to unlock"}
     >
       <span class="statusbar-icon">{$storagePolicyBadgeStore.icon}</span>
       <span class="statusbar-label">{$storagePolicyLabelStore}</span>
-    </a>
+    </button>
+
+    <button
+      type="button"
+      on:click={handleFooterClick}
+      class="statusbar-item statusbar-right"
+      title={$isUnlocked ? "Click to configure backend server address" : "Current Backend Server"}
+    >
+      <span class="statusbar-icon">🖥️</span>
+      <span class="statusbar-label">{$effectiveBackendStore || "No Server Configured"}</span>
+    </button>
   </footer>
+
+  <StoragePolicyModal
+    isOpen={isSettingsModalOpen}
+    on:close={() => (isSettingsModalOpen = false)}
+  />
 </div>
 
 <style>
@@ -344,6 +371,7 @@
 
   .vscode-statusbar {
     display: flex;
+    justify-content: space-between;
     align-items: center;
     padding: 0.25rem 1rem;
     background: #007acc;
@@ -363,6 +391,15 @@
     padding: 0.15rem 0.4rem;
     border-radius: 3px;
     transition: background 0.15s ease;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: inherit;
+  }
+
+  .statusbar-right {
+    margin-left: auto;
   }
 
   .statusbar-item:hover {

@@ -2,7 +2,7 @@
   import { db } from "$lib/db/db";
   import { eraseStudent } from "$lib/gdpr/erasure";
   import { wipeDatabase } from "$lib/db/hygiene";
-  import { sessionStore, isUnlocked } from "$lib/stores/session";
+  import { sessionStore, isUnlocked, isAuthenticated } from "$lib/stores/session";
   import { studentRepository } from "$lib/repositories/studentRepository";
   import { get } from "svelte/store";
   import {
@@ -25,12 +25,23 @@
   });
 
   async function handleLatexChange(val: "server" | "local") {
+    if (val === "server" && !get(isAuthenticated)) {
+      alert("Server compilation requires an authenticated session. Please log in.");
+      window.location.href = "/unlock";
+      return;
+    }
     storagePolicyStore.updateSetting("latexCompilation", val);
     statusMsg = `LaTeX Compilation set to ${val}.`;
   }
 
   async function handleStorageModeChange(val: StorageMode) {
     if (val === $storagePolicyStore.storageMode) return;
+
+    if ((val === "all-server" || val === "hybrid") && !get(isAuthenticated)) {
+      alert("Server storage modes require an authenticated session. Please log in.");
+      window.location.href = "/unlock";
+      return;
+    }
 
     const confirmed = confirm(
       "Changing storage mode requires clearing the current active session state. Please make sure you have exported a .bgproj backup first!\n\nDo you want to proceed and switch storage mode?"

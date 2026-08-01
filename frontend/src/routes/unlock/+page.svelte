@@ -7,14 +7,24 @@
   } from "$lib/crypto/sessionKey";
   import { sessionStore } from "$lib/stores/session";
   import { api } from "$lib/api/client";
+  import { backendStore } from "$lib/stores/backendStore";
+  import { storagePolicyStore } from "$lib/stores/storagePolicy";
+  import { get } from "svelte/store";
 
   let password = "";
   let email = "";
+  let backendUrl = get(backendStore);
   let errorMsg = "";
   let isLoading = false;
 
   async function handleUnlock() {
     errorMsg = "";
+    const trimmedBackendUrl = backendUrl.trim();
+    if (!trimmedBackendUrl) {
+      errorMsg = "Please enter a server address.";
+      return;
+    }
+
     const normalizedEmail = email.trim().toLowerCase();
     if (!normalizedEmail) {
       errorMsg = "Please enter your email.";
@@ -24,6 +34,9 @@
       errorMsg = "Please enter your password.";
       return;
     }
+
+    // Set transient backend URL for authentication attempt
+    backendStore.setTransient(trimmedBackendUrl);
 
     isLoading = true;
     try {
@@ -35,6 +48,14 @@
         email: normalizedEmail,
         password,
       });
+
+      // Save backend URL to localStorage ONLY after successful login
+      backendStore.saveSuccessfulBackendUrl(trimmedBackendUrl);
+
+      // Persist server mode configuration in browser if previously set to all-local
+      if (get(storagePolicyStore).storageMode === "all-local") {
+        storagePolicyStore.updateSetting("storageMode", "all-server");
+      }
 
       // Derive local session keys for client-side encryption
       const salt = generateSalt();
@@ -54,6 +75,8 @@
       // Redirect to settings page per requirement
       await goto("/settings");
     } catch (err: any) {
+      // Revert store to last saved URL if authentication failed
+      backendStore.restoreSavedUrl();
       errorMsg =
         err.message || "Unlock failed. Check your password or credentials.";
     } finally {
@@ -65,6 +88,7 @@
     errorMsg = "";
     isLoading = true;
     try {
+      storagePolicyStore.updateSetting("storageMode", "all-local");
       await sessionStore.initAnonymousSession();
       await goto("/");
     } catch (err: any) {
@@ -86,6 +110,20 @@
     {/if}
 
     <form on:submit|preventDefault={handleUnlock}>
+      <div class="form-group">
+        <label for="backendUrl">Backend Server URL (Required)</label>
+        <input
+          id="backendUrl"
+          type="text"
+          bind:value={backendUrl}
+          placeholder="e.g. http://localhost:8000"
+          required
+        />
+        <small class="hint">
+          Enter backend server address (e.g. http://localhost:8000).
+        </small>
+      </div>
+
       <div class="form-group">
         <label for="email">Email</label>
         <input
