@@ -25,7 +25,8 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_TTL_DAYS: int = 7
 
     # CORS — required; app refuses to start if unset or empty
-    CORS_ALLOWED_ORIGINS: list[str] = ["http://localhost:5173"]
+    CORS_ALLOWED_ORIGINS: list[str] = ["http://localhost:5173", "https://examance.pages.dev"]
+    CORS_ALLOWED_ORIGIN_REGEX: str | None = r"https://([a-zA-Z0-9-]+\.)*valentin-herrmann\.com"
 
     # Environment
     ENVIRONMENT: str = "production"
@@ -40,7 +41,10 @@ class Settings(BaseSettings):
     @classmethod
     def parse_cors_origins(cls, v: object) -> list[str]:
         if isinstance(v, str):
-            return json.loads(v)
+            v_str = v.strip()
+            if v_str.startswith("["):
+                return json.loads(v_str)
+            return [origin.strip() for origin in v_str.split(",") if origin.strip()]
         return v  # type: ignore[return-value]
 
     @model_validator(mode="after")

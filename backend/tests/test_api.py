@@ -417,5 +417,42 @@ async def test_exercise_usage_and_deletion(client: AsyncClient, db: AsyncSession
     assert get_res.status_code == 404
 
 
+@pytest.mark.asyncio
+async def test_cors_preflight_origins(client: AsyncClient) -> None:
+    # 1. Cloudflare pages origin
+    resp = await client.options(
+        "/api/v1/auth/login",
+        headers={
+            "Origin": "https://examance.pages.dev",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "content-type",
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.headers.get("access-control-allow-origin") == "https://examance.pages.dev"
+
+    # 2. valentin-herrmann.com subdomain
+    resp_sub = await client.options(
+        "/api/v1/auth/login",
+        headers={
+            "Origin": "https://sub.valentin-herrmann.com",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert resp_sub.status_code == 200
+    assert resp_sub.headers.get("access-control-allow-origin") == "https://sub.valentin-herrmann.com"
+
+    # 3. Unauthorized origin
+    resp_unauth = await client.options(
+        "/api/v1/auth/login",
+        headers={
+            "Origin": "https://unauthorized-domain.com",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+    assert resp_unauth.headers.get("access-control-allow-origin") is None
+
+
+
 
 
