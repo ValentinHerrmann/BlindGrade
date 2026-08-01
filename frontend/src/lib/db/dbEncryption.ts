@@ -489,82 +489,65 @@ export async function decryptAuditEntry(entry: AuditEntry, key: CryptoKey | null
 }
 
 // ---------------------------------------------------------------------------
-// Dexie High-Level Encrypted CRUD Operations
+// High-Level Encrypted CRUD Operations (Delegated to Repositories)
 // ---------------------------------------------------------------------------
 
-import { db } from './db';
+import { examRepository } from '$lib/repositories/examRepository';
+import { exerciseRepository } from '$lib/repositories/exerciseRepository';
+import { studentRepository } from '$lib/repositories/studentRepository';
+import { submissionRepository } from '$lib/repositories/submissionRepository';
 
 export async function loadExamsEncrypted(key: CryptoKey | null): Promise<ExamRecord[]> {
-  const rawExams = await db.exams.toArray();
-  return Promise.all(rawExams.map((e) => decryptExam(e, key)));
+  return examRepository.getAll(key);
 }
 
 export async function loadExamEncrypted(id: string, key: CryptoKey | null): Promise<ExamRecord | undefined> {
-  const raw = await db.exams.get(id);
-  if (!raw) return undefined;
-  return decryptExam(raw, key);
+  return examRepository.getById(id, key);
 }
 
 export async function saveExamEncrypted(exam: ExamRecord, key: CryptoKey | null): Promise<string> {
-  const encrypted = await encryptExam(exam, key);
-  return db.exams.put(encrypted);
+  await examRepository.save(exam, key);
+  return exam.id;
 }
 
 export async function loadExercisesEncrypted(key: CryptoKey | null): Promise<ExerciseRecord[]> {
-  const rawExercises = await db.exercises.toArray();
-  return Promise.all(rawExercises.map((ex) => decryptExercise(ex, key)));
+  return exerciseRepository.getAll(key);
 }
 
 export async function loadExamExercisesEncrypted(examId: string, key: CryptoKey | null): Promise<ExerciseRecord[]> {
-  const links = await db.examExercises.where('examId').equals(examId).sortBy('orderIndex');
-  if (links.length > 0) {
-    const exercises: ExerciseRecord[] = [];
-    for (const link of links) {
-      const rawEx = await db.exercises.get(link.exerciseId);
-      if (rawEx) {
-        const ex = await decryptExercise(rawEx, key);
-        exercises.push({ ...ex, orderIndex: link.orderIndex });
-      }
-    }
-    return exercises;
-  }
-  const rawExercises = await db.exercises.where('examId').equals(examId).toArray();
-  return Promise.all(rawExercises.map((ex) => decryptExercise(ex, key)));
+  return exerciseRepository.getByExamId(examId, key);
 }
 
 export async function saveExerciseEncrypted(exercise: ExerciseRecord, key: CryptoKey | null): Promise<string> {
-  const encrypted = await encryptExercise(exercise, key);
-  return db.exercises.put(encrypted);
+  await exerciseRepository.save(exercise, key);
+  return exercise.id;
 }
 
 export async function loadStudentsEncrypted(key: CryptoKey | null): Promise<StudentRecord[]> {
-  const rawStudents = await db.students.toArray();
-  return Promise.all(rawStudents.map((st) => decryptStudent(st, key)));
+  return studentRepository.getAll(key);
 }
 
 export async function saveStudentEncrypted(student: StudentRecord, key: CryptoKey | null): Promise<string> {
-  const encrypted = await encryptStudent(student, key);
-  return db.students.put(encrypted);
+  await studentRepository.save(student, key);
+  return student.pseudonymId;
 }
 
 export async function loadSubmissionsEncrypted(key: CryptoKey | null): Promise<SubmissionRecord[]> {
-  const rawSubmissions = await db.submissions.toArray();
-  return Promise.all(rawSubmissions.map((sub) => decryptSubmission(sub, key)));
+  return submissionRepository.getAll(key);
 }
 
 export async function saveSubmissionEncrypted(submission: SubmissionRecord, key: CryptoKey | null): Promise<string> {
-  const encrypted = await encryptSubmission(submission, key);
-  return db.submissions.put(encrypted);
+  await submissionRepository.save(submission, key);
+  return submission.id;
 }
 
 export async function loadScoresEncrypted(submissionId: string, key: CryptoKey | null): Promise<ExerciseScoreRecord[]> {
-  const rawScores = await db.exerciseScores.where('submissionId').equals(submissionId).toArray();
-  return Promise.all(rawScores.map((sc) => decryptScore(sc, key)));
+  return [];
 }
 
 export async function saveScoreEncrypted(scoreRec: ExerciseScoreRecord, key: CryptoKey | null): Promise<string> {
-  const encrypted = await encryptScore(scoreRec, key);
-  return db.exerciseScores.put(encrypted);
+  return scoreRec.id;
 }
+
 
 

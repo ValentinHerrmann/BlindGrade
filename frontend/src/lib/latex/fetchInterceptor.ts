@@ -19,7 +19,7 @@ if (!globalScope.__busytex_fetch_intercepted__) {
   function getChunkManifest(): Promise<Record<string, any>> {
     if (!chunkManifestPromise) {
       chunkManifestPromise = originalFetch('/core/busytex/chunk-manifest.json')
-        .then(async (res) => {
+        .then(async (res: Response) => {
           const contentType = res.headers.get('content-type') || '';
           if (res.ok && contentType.includes('application/json')) {
             return await res.json();
@@ -28,7 +28,7 @@ if (!globalScope.__busytex_fetch_intercepted__) {
         })
         .catch(() => ({}));
     }
-    return chunkManifestPromise;
+    return chunkManifestPromise!;
   }
 
   function getTargetUrl(target: any): string {

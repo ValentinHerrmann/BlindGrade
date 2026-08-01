@@ -1,49 +1,49 @@
 import { writable, derived } from 'svelte/store';
 
+export type StorageMode = 'all-server' | 'all-local' | 'hybrid';
+
 export interface StoragePolicy {
+    storageMode: StorageMode;
     latexCompilation: 'server' | 'local';
-    examAndExerciseStorage: 'server' | 'local';
-    resultsAndStudentsData: 'server' | 'local';
 }
 
 const STORAGE_KEY = 'bg_storage_policy';
 
 export const DEFAULT_POLICY: StoragePolicy = {
+    storageMode: 'all-local',
     latexCompilation: 'local',
-    examAndExerciseStorage: 'local',
-    resultsAndStudentsData: 'local',
 };
 
 export function getStoragePolicyLabel(policy: StoragePolicy): string {
-    const parts = [];
-    parts.push(policy.latexCompilation === 'server' ? 'LaTeX Server' : 'LaTeX Local');
-    parts.push(policy.examAndExerciseStorage === 'server' ? 'Exams Server' : 'Exams Local');
-    parts.push(policy.resultsAndStudentsData === 'server' ? 'Student Data Server' : 'Student Data Local');
-    return parts.join(' | ');
+    const modeLabel = policy.storageMode === 'all-server' 
+        ? 'All Server' 
+        : policy.storageMode === 'all-local' 
+            ? 'All Local' 
+            : 'Hybrid (Exercises Server, Students Local)';
+    const latexLabel = policy.latexCompilation === 'server' ? 'LaTeX Server' : 'LaTeX Local';
+    return `${modeLabel} | ${latexLabel}`;
 }
 
 export function getStoragePolicyBadge(policy: StoragePolicy): { icon: string; text: string; title: string } {
-    const isAllLocal = policy.latexCompilation === 'local' && policy.examAndExerciseStorage === 'local' && policy.resultsAndStudentsData === 'local';
-    const isAllServer = policy.latexCompilation === 'server' && policy.examAndExerciseStorage === 'server' && policy.resultsAndStudentsData === 'server';
-    
-    if (isAllLocal) {
+    if (policy.storageMode === 'all-local') {
         return {
             icon: '🛡️',
-            text: 'Fully Local',
-            title: 'Everything stored & processed locally',
+            text: 'All Local',
+            title: 'Everything stored locally in browser IndexedDB',
         };
-    } else if (isAllServer) {
+    } else if (policy.storageMode === 'all-server') {
         return {
             icon: '☁️',
-            text: 'Fully Server',
-            title: 'Everything processed & stored on server',
+            text: 'All Server',
+            title: 'Everything stored and synced with backend server',
+        };
+    } else {
+        return {
+            icon: '🔀',
+            text: 'Hybrid Mode',
+            title: 'Exercises & Exams on server, Student identity & submissions local',
         };
     }
-    return {
-        icon: '🔀',
-        text: 'Custom Storage',
-        title: getStoragePolicyLabel(policy),
-    };
 }
 
 function getInitialPolicy(): StoragePolicy {
@@ -51,13 +51,16 @@ function getInitialPolicy(): StoragePolicy {
         const saved = localStorage.getItem(STORAGE_KEY);
         if (saved) {
             try {
-                if (saved === 'server-synced') {
-                    return { latexCompilation: 'server', examAndExerciseStorage: 'server', resultsAndStudentsData: 'server' };
-                } else if (saved === 'local-only') {
-                    return DEFAULT_POLICY;
-                }
                 const parsed = JSON.parse(saved);
-                return { ...DEFAULT_POLICY, ...parsed };
+                if (parsed.storageMode && parsed.latexCompilation) {
+                    return parsed;
+                }
+                // Migration from legacy policy structure
+                if (parsed.examAndExerciseStorage === 'server' && parsed.resultsAndStudentsData === 'server') {
+                    return { storageMode: 'all-server', latexCompilation: parsed.latexCompilation || 'local' };
+                } else if (parsed.examAndExerciseStorage === 'server' && parsed.resultsAndStudentsData === 'local') {
+                    return { storageMode: 'hybrid', latexCompilation: parsed.latexCompilation || 'local' };
+                }
             } catch {
                 return DEFAULT_POLICY;
             }
@@ -100,3 +103,4 @@ export const storagePolicyBadgeStore = derived(
     storagePolicyStore,
     ($policy) => getStoragePolicyBadge($policy)
 );
+

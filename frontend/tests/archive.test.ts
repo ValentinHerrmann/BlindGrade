@@ -101,7 +101,10 @@ describe('.bgproj Archive Packer and Unpacker', () => {
       id: exerciseId,
       name: 'Kinematics Problem',
       maxPoints: 10,
+      questionType: 'free_text',
+      penalty: 0,
     }, testKey);
+
 
     await db.examExercises.put({
       examId,

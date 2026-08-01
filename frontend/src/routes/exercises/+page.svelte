@@ -7,8 +7,8 @@
   import { loadExercisesEncrypted, saveExerciseEncrypted, encryptExercise } from "$lib/db/dbEncryption";
   import { api } from "$lib/api/client";
   import { parseExerciseScore } from "$lib/latex/scoreParser";
-  import { syncLocalDataToServer } from "$lib/services/migrationService";
   import { get } from "svelte/store";
+
   import LatexEditor from "$lib/components/LatexEditor.svelte";
   import LatexViewer from "$lib/components/LatexViewer.svelte";
   import { highlightLatexToHtml } from "$lib/latex/highlighter";
@@ -495,7 +495,7 @@
     errorMsg = "";
     const key = get(sessionStore).sessionKey;
     try {
-      if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === "server") {
+      if ($isAuthenticated && $storagePolicyStore.storageMode !== "all-local") {
         try {
           const remoteExs = (await api.get("/exercises")) as any[];
           exercises = remoteExs.map((e: any) => ({
@@ -536,18 +536,7 @@
     }
   }
 
-  async function syncExercisesToServer() {
-    isSyncingExercises = true;
-    try {
-      await syncLocalDataToServer();
-      await loadExercises();
-      alert("Exercises successfully synced to server!");
-    } catch (err: any) {
-      alert(`Sync failed: ${err.message}`);
-    } finally {
-      isSyncingExercises = false;
-    }
-  }
+
 
   function openCreateModal() {
     editingExercise = null;
@@ -600,7 +589,7 @@
     isDeleteLoading = true;
     isDeleteModalOpen = true;
 
-    if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === "server") {
+    if ($isAuthenticated && $storagePolicyStore.storageMode !== "all-local") {
       try {
         const usage = (await api.get(`/exercises/${ex.id}/usage`)) as any;
         deleteUsageInfo = {
@@ -620,7 +609,7 @@
   async function handleConfirmDelete() {
     if (!deletingExercise) return;
     try {
-      if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === "server") {
+      if ($isAuthenticated && $storagePolicyStore.storageMode !== "all-local") {
         await api.delete(`/exercises/${deletingExercise.id}`);
       }
       await db.exercises.delete(deletingExercise.id);
@@ -636,7 +625,7 @@
     let groupExs: ExerciseRecord[] = [];
     const key = get(sessionStore).sessionKey;
 
-    if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === "server") {
+    if ($isAuthenticated && $storagePolicyStore.storageMode !== "all-local") {
       try {
         if (ex.exerciseGroupId) {
           const remoteExs = (await api.get(`/exercises?group_id=${ex.exerciseGroupId}&current_only=false`)) as any[];
@@ -708,7 +697,7 @@
       const updatedMaxPoints = parseExerciseScore(diffLeftLatex);
       const key = get(sessionStore).sessionKey;
 
-      if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === "server") {
+      if ($isAuthenticated && $storagePolicyStore.storageMode !== "all-local") {
         await api.patch(`/exercises/${diffLeftEx.id}`, {
           latex_body: diffLeftLatex,
           max_points: updatedMaxPoints,
@@ -739,7 +728,7 @@
       const updatedMaxPoints = parseExerciseScore(diffRightLatex);
       const key = get(sessionStore).sessionKey;
 
-      if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === "server") {
+      if ($isAuthenticated && $storagePolicyStore.storageMode !== "all-local") {
         await api.patch(`/exercises/${diffRightEx.id}`, {
           latex_body: diffRightLatex,
           max_points: updatedMaxPoints,
@@ -812,7 +801,7 @@
     }
 
     try {
-      if ($storagePolicyStore.examAndExerciseStorage === "server") {
+      if ($storagePolicyStore.storageMode !== "all-local") {
         await api.post(`/exercises/${variantBaseEx.id}/new-variant`, {
           name: variantName,
           topic_tag: variantTopicTag,
@@ -853,20 +842,7 @@
 </script>
 
 <div class="exercise-library-page">
-  {#if isLocalFallback}
-    <div class="local-fallback-banner">
-      <span
-        >ℹ️ Exercise library is currently loaded from local browser storage.</span
-      >
-      <button
-        class="sync-now-btn"
-        on:click={syncExercisesToServer}
-        disabled={isSyncingExercises}
-      >
-        {isSyncingExercises ? "Syncing..." : "Sync to Server Now"}
-      </button>
-    </div>
-  {/if}
+
 
   <div class="page-header">
     <div>

@@ -3,68 +3,25 @@
   import { eraseStudent } from "$lib/gdpr/erasure";
   import { wipeDatabase } from "$lib/db/hygiene";
   import { sessionStore, isUnlocked } from "$lib/stores/session";
-  import { loadStudentsEncrypted } from "$lib/db/dbEncryption";
+  import { studentRepository } from "$lib/repositories/studentRepository";
   import { get } from "svelte/store";
   import {
     storagePolicyStore,
-    getStoragePolicyLabel,
-    type StoragePolicy,
+    type StorageMode,
   } from "$lib/stores/storagePolicy";
   import type { StudentRecord } from "$lib/db/schema";
-  import {
-    checkUnsyncedLocalCount,
-    syncLocalDataToServer,
-    downloadBackupAndPurgeServer,
-    restoreServerData,
-    type UnsyncedCounts,
-  } from "$lib/services/migrationService";
   import { onMount } from "svelte";
-  import { goto } from "$app/navigation";
-  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
 
   let students: StudentRecord[] = [];
   let isErasing = false;
   let statusMsg = "";
-
-  // Migration modal state (Local -> Server)
-  let showMigrationModal = false;
-  let unsyncedCounts: UnsyncedCounts = {
-    unsyncedExams: 0,
-    unsyncedExercises: 0,
-    unsyncedStudents: 0,
-    unsyncedSubmissions: 0,
-    total: 0,
-  };
-  let isSyncing = false;
-  let syncProgressMsg = "";
-
-  // Purge modal state (Server -> Local)
-  let showPurgeModal = false;
-  let purgePassword = "";
-  let isPurging = false;
-  let isRestoring = false;
-  let showPurgeConfirmClose = false;
-
-  function requestClosePurgeModal() {
-    if (purgePassword) {
-      showPurgeConfirmClose = true;
-    } else {
-      forceClosePurgeModal();
-    }
-  }
-
-  function forceClosePurgeModal() {
-    showPurgeConfirmClose = false;
-    showPurgeModal = false;
-    purgePassword = "";
-  }
 
   onMount(async () => {
     if (!$isUnlocked) {
       await sessionStore.initAnonymousSession();
     }
     const key = get(sessionStore).sessionKey;
-    students = await loadStudentsEncrypted(key);
+    students = await studentRepository.getAll(key);
   });
 
   async function handleLatexChange(val: "server" | "local") {
@@ -72,95 +29,18 @@
     statusMsg = `LaTeX Compilation set to ${val}.`;
   }
 
-  async function handleExamStorageChange(val: "server" | "local") {
-    if (val === $storagePolicyStore.examAndExerciseStorage) return;
+  async function handleStorageModeChange(val: StorageMode) {
+    if (val === $storagePolicyStore.storageMode) return;
 
-    if (val === "server") {
-      const counts = await checkUnsyncedLocalCount();
-      if (counts.unsyncedExams > 0 || counts.unsyncedExercises > 0) {
-        unsyncedCounts = counts;
-        showMigrationModal = true;
-        return;
-      }
-    }
-    storagePolicyStore.updateSetting("examAndExerciseStorage", val);
-    statusMsg = `Exam & Exercise storage set to ${val}.`;
-  }
+    const confirmed = confirm(
+      "Changing storage mode requires clearing the current active session state. Please make sure you have exported a .bgproj backup first!\n\nDo you want to proceed and switch storage mode?"
+    );
+    if (!confirmed) return;
 
-  async function handleStudentDataChange(val: "server" | "local") {
-    if (val === $storagePolicyStore.resultsAndStudentsData) return;
-
-    if (val === "server") {
-      const counts = await checkUnsyncedLocalCount();
-      if (counts.unsyncedStudents > 0 || counts.unsyncedSubmissions > 0) {
-        unsyncedCounts = counts;
-        showMigrationModal = true;
-        return;
-      }
-    } else if (val === "local") {
-      showPurgeModal = true;
-      return;
-    }
-
-    storagePolicyStore.updateSetting("resultsAndStudentsData", val);
-    statusMsg = `Results & Students data storage set to ${val}.`;
-  }
-
-  async function startMigration() {
-    isSyncing = true;
-    try {
-      await syncLocalDataToServer((step, current, total) => {
-        syncProgressMsg = `${step} (${current}/${total})...`;
-      });
-      storagePolicyStore.updateSetting("examAndExerciseStorage", "server");
-      storagePolicyStore.updateSetting("resultsAndStudentsData", "server");
-      statusMsg = "All local data successfully synced to server!";
-      showMigrationModal = false;
-    } catch (err: any) {
-      alert(`Migration failed: ${err.message}`);
-    } finally {
-      isSyncing = false;
-      syncProgressMsg = "";
-    }
-  }
-
-  function skipMigration() {
-    storagePolicyStore.updateSetting("examAndExerciseStorage", "server");
-    storagePolicyStore.updateSetting("resultsAndStudentsData", "server");
-    statusMsg = "Storage policy updated to server.";
-    showMigrationModal = false;
-  }
-
-  async function startPurgeAndBackup() {
-    if (!purgePassword) {
-      alert("Please enter a password for deriving the backup encryption key.");
-      return;
-    }
-    isPurging = true;
-    try {
-      const result = await downloadBackupAndPurgeServer(purgePassword);
-      storagePolicyStore.updateSetting("resultsAndStudentsData", "local");
-      statusMsg = `Backup downloaded! ${result.purgedStudents} student records and ${result.purgedSubmissions} submissions soft-deleted on server (7-day retention until ${result.retentionUntil}).`;
-      showPurgeModal = false;
-      purgePassword = "";
-    } catch (err: any) {
-      alert(`Backup/Purge failed: ${err.message}`);
-    } finally {
-      isPurging = false;
-    }
-  }
-
-  async function handleRestoreServerData() {
-    isRestoring = true;
-    try {
-      const res = await restoreServerData();
-      statusMsg = `Restored ${res.restoredStudents} student identities and ${res.restoredSubmissions} submissions on server!`;
-      showPurgeModal = false;
-    } catch (err: any) {
-      alert(`Restore failed: ${err.message}`);
-    } finally {
-      isRestoring = false;
-    }
+    await wipeDatabase();
+    storagePolicyStore.updateSetting("storageMode", val);
+    statusMsg = `Global Storage Mode updated to ${val}. Session cleared.`;
+    window.location.reload();
   }
 
   async function handleEraseStudent(pseudonymId: string, examId: string) {
@@ -199,8 +79,54 @@
     {/if}
 
     <div class="card" id="storage-policy">
-      <h3>1. LaTeX Compilation</h3>
-      <p class="description">Select where LaTeX files are compiled:</p>
+      <h3>1. Global Data Storage Strategy</h3>
+      <p class="description">Select where your exams, exercises, student identities, and results are stored:</p>
+      <div class="policy-options">
+        <label class="option-card" class:active={$storagePolicyStore.storageMode === "all-local"}>
+          <input
+            type="radio"
+            name="storageMode"
+            value="all-local"
+            checked={$storagePolicyStore.storageMode === "all-local"}
+            on:change={() => handleStorageModeChange("all-local")}
+          />
+          <div>
+            <strong>All Local (Privacy First)</strong>
+            <p>Exams, exercise library, student identities, and scans stored 100% locally in your browser IndexedDB.</p>
+          </div>
+        </label>
+
+        <label class="option-card" class:active={$storagePolicyStore.storageMode === "all-server"}>
+          <input
+            type="radio"
+            name="storageMode"
+            value="all-server"
+            checked={$storagePolicyStore.storageMode === "all-server"}
+            on:change={() => handleStorageModeChange("all-server")}
+          />
+          <div>
+            <strong>All Server</strong>
+            <p>All data synchronized and stored on the secure BlindGrade server.</p>
+          </div>
+        </label>
+
+        <label class="option-card" class:active={$storagePolicyStore.storageMode === "hybrid"}>
+          <input
+            type="radio"
+            name="storageMode"
+            value="hybrid"
+            checked={$storagePolicyStore.storageMode === "hybrid"}
+            on:change={() => handleStorageModeChange("hybrid")}
+          />
+          <div>
+            <strong>Hybrid Mode (Library on Server, Results Local)</strong>
+            <p>Exercise library and exam templates on server, but student identities and grade submissions stay 100% on your local device.</p>
+          </div>
+        </label>
+      </div>
+
+      <h3 style="margin-top: 1.5rem;">2. LaTeX Compilation</h3>
+      <p class="description">Select where LaTeX files are compiled (independent of storage strategy):</p>
       <div class="policy-options">
         <label class="option-card" class:active={$storagePolicyStore.latexCompilation === "local"}>
           <input
@@ -229,69 +155,8 @@
           </div>
         </label>
       </div>
-
-      <h3 style="margin-top: 1.5rem;">2. Exam & Exercise Storage</h3>
-      <p class="description">Select where exams and exercise templates are stored:</p>
-      <div class="policy-options">
-        <label class="option-card" class:active={$storagePolicyStore.examAndExerciseStorage === "local"}>
-          <input
-            type="radio"
-            name="examAndExerciseStorage"
-            value="local"
-            checked={$storagePolicyStore.examAndExerciseStorage === "local"}
-            on:change={() => handleExamStorageChange("local")}
-          />
-          <div>
-            <strong>Local File / Browser DB</strong>
-            <p>Exams and exercise library stored exclusively in your browser.</p>
-          </div>
-        </label>
-        <label class="option-card" class:active={$storagePolicyStore.examAndExerciseStorage === "server"}>
-          <input
-            type="radio"
-            name="examAndExerciseStorage"
-            value="server"
-            checked={$storagePolicyStore.examAndExerciseStorage === "server"}
-            on:change={() => handleExamStorageChange("server")}
-          />
-          <div>
-            <strong>Server Storage</strong>
-            <p>Exams and exercise templates stored securely in your server account.</p>
-          </div>
-        </label>
-      </div>
-
-      <h3 style="margin-top: 1.5rem;">3. Results & Students Data</h3>
-      <p class="description">Select where student identities, scans, and grades are stored:</p>
-      <div class="policy-options">
-        <label class="option-card" class:active={$storagePolicyStore.resultsAndStudentsData === "local"}>
-          <input
-            type="radio"
-            name="resultsAndStudentsData"
-            value="local"
-            checked={$storagePolicyStore.resultsAndStudentsData === "local"}
-            on:change={() => handleStudentDataChange("local")}
-          />
-          <div>
-            <strong>Local File / Browser DB (Privacy First)</strong>
-            <p>Student names, scans, and grades stay 100% on your device.</p>
-          </div>
-        </label>
-        <label class="option-card" class:active={$storagePolicyStore.resultsAndStudentsData === "server"}>
-          <input
-            type="radio"
-            name="resultsAndStudentsData"
-            value="server"
-            checked={$storagePolicyStore.resultsAndStudentsData === "server"}
-            on:change={() => handleStudentDataChange("server")}
-          />
-          <div>
-            <strong>Server Encrypted Storage</strong>
-            <p>Student data is AES-256-GCM encrypted client-side before syncing to database.</p>
-          </div>
-        </label>
-      </div>
     </div>
+
 
     <div class="card">
       <h3>GDPR Art. 17 — Manage Student Identities & Erasure</h3>
@@ -341,140 +206,9 @@
       >
     </div>
   </div>
-
-  {#if showMigrationModal}
-    <div class="modal-backdrop">
-      <div class="modal-card">
-        <h3>Sync Local Data to Server</h3>
-        <p>Found local items in browser storage:</p>
-        <ul class="counts-list">
-          <li><strong>{unsyncedCounts.unsyncedExams}</strong> exams</li>
-          <li><strong>{unsyncedCounts.unsyncedExercises}</strong> exercises</li>
-          <li>
-            <strong>{unsyncedCounts.unsyncedStudents}</strong> student identities
-          </li>
-          <li>
-            <strong>{unsyncedCounts.unsyncedSubmissions}</strong> scan submissions
-          </li>
-        </ul>
-        <p class="modal-note">
-          Syncing uploads your local data to the server. Student identities are
-          AES-256-GCM encrypted client-side before upload.
-        </p>
-        {#if syncProgressMsg}
-          <div class="progress-status">{syncProgressMsg}</div>
-        {/if}
-        <div class="modal-actions">
-          <button
-            class="primary-btn"
-            on:click={startMigration}
-            disabled={isSyncing}
-          >
-            {isSyncing ? "Syncing..." : "Sync All Local Data to Server"}
-          </button>
-          <button
-            class="secondary-btn"
-            on:click={skipMigration}
-            disabled={isSyncing}
-          >
-            Skip Migration
-          </button>
-        </div>
-      </div>
-    </div>
-  {/if}
-
-  {#if showPurgeModal}
-    <div
-      class="modal-backdrop"
-      role="button"
-      tabindex="-1"
-      on:click|self={requestClosePurgeModal}
-      on:keydown|self={(e) => e.key === "Escape" && requestClosePurgeModal()}
-    >
-      <div class="modal-card">
-        <h3>Switch to Local-Only & Server Student Data Purge</h3>
-        <p>
-          Switching to <strong>Local-Only</strong> mode will download an
-          encrypted <code>.bgproj</code> archive backup of all your exams and remove
-          active student data from your account on the server.
-        </p>
-        <div class="retention-notice">
-          <strong>Data Retention Notes:</strong>
-          <ul>
-            <li>
-              <strong>Student Data Purge</strong>: Student identities, scans,
-              and grades will be soft-deleted on the server with a
-              <strong>7-day temporary retention backup</strong> (for accidental recovery)
-              before permanent deletion.
-            </li>
-            <li>
-              <strong>LaTeX Templates</strong>: Anonymized LaTeX exercise code
-              and exam preambles will
-              <strong>remain stored on the server</strong> to preserve your reusable
-              exercise library and allow server-side compilation.
-            </li>
-          </ul>
-        </div>
-
-        <div class="password-field">
-          <label for="purge-password">Backup Encryption Password:</label>
-          <input
-            id="purge-password"
-            type="password"
-            placeholder="Enter password for backup key derivation"
-            bind:value={purgePassword}
-          />
-        </div>
-
-        <div class="modal-actions">
-          <button
-            class="danger-btn"
-            on:click={startPurgeAndBackup}
-            disabled={isPurging || !purgePassword}
-          >
-            {isPurging
-              ? "Downloading & Purging..."
-              : "Download Backup & Purge Server Student Data"}
-          </button>
-          <button
-            class="secondary-btn"
-            on:click={requestClosePurgeModal}
-            disabled={isPurging}
-          >
-            Cancel
-          </button>
-        </div>
-
-        <hr class="modal-divider" />
-
-        <div class="restore-section">
-          <p class="restore-hint">
-            Made a mistake? You can restore soft-deleted student data within 7
-            days.
-          </p>
-          <button
-            class="restore-btn"
-            on:click={handleRestoreServerData}
-            disabled={isRestoring}
-          >
-            {isRestoring ? "Restoring..." : "Restore Soft-Deleted Student Data"}
-          </button>
-        </div>
-      </div>
-    </div>
-  {/if}
 {/if}
 
-<ConfirmDialog
-  isOpen={showPurgeConfirmClose}
-  title="Discard Backup Password?"
-  message="You have entered a backup encryption password. Are you sure you want to cancel without purging?"
-  confirmText="Discard & Cancel"
-  cancelText="Keep Editing"
-  on:confirm={forceClosePurgeModal}
-  on:cancel={() => (showPurgeConfirmClose = false)}
-/>
+
 
 <style>
   .settings-page {

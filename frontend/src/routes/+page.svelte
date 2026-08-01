@@ -12,7 +12,7 @@
 
   import { storagePolicyStore } from '$lib/stores/storagePolicy';
   import { api } from '$lib/api/client';
-  import { syncLocalDataToServer } from '$lib/services/migrationService';
+
 
   let exams: ExamRecord[] = [];
   let isImporting = false;
@@ -60,7 +60,7 @@
     const key = get(sessionStore).sessionKey;
     const localExams = await loadExamsEncrypted(key);
 
-    if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === 'server') {
+    if ($isAuthenticated && $storagePolicyStore.storageMode !== 'all-local') {
       try {
         const remoteExamsRaw = (await api.get('/exams')) as any[];
         const remoteExams: ExamRecord[] = remoteExamsRaw.map((e: any) => ({
@@ -165,14 +165,7 @@
         importStatus = `Status: ${p.stage} (${p.current}%)`;
       });
 
-      if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === 'server') {
-        try {
-          importStatus = 'Syncing imported data to server...';
-          await syncLocalDataToServer();
-        } catch (syncErr) {
-          console.warn('Post-import server sync skipped or failed:', syncErr);
-        }
-      }
+
 
       alert(`Import successful! Loaded ${res.examCount} exam(s) and ${res.submissionCount} submission(s).`);
       await refreshExams();

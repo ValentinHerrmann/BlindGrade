@@ -223,7 +223,7 @@ Frage hier eingeben... \\BE
   async function loadLibrary() {
     const key = get(sessionStore).sessionKey;
     try {
-      if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === "server") {
+      if ($isAuthenticated && $storagePolicyStore.storageMode !== "all-local") {
         try {
           const remoteExs = (await api.get("/exercises")) as any[];
           libraryExercises = remoteExs.map((e: any) => ({
@@ -322,7 +322,7 @@ Frage hier eingeben... \\BE
     if (saveCustomToLibrary) {
       const key = get(sessionStore).sessionKey;
       await saveExerciseEncrypted(newEx, key);
-      if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === "server") {
+      if ($isAuthenticated && $storagePolicyStore.storageMode !== "all-local") {
         try {
           await api.post("/exercises", {
             id: newEx.id,
@@ -461,7 +461,7 @@ ${exerciseInputs}
       }));
       await db.examExercises.bulkPut(examExerciseRecords);
 
-      if ($storagePolicyStore.examAndExerciseStorage === "server") {
+      if ($storagePolicyStore.storageMode !== "all-local") {
         try {
           await api.post("/exams", {
             id: examId,

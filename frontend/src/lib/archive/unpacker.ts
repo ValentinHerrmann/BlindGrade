@@ -223,7 +223,7 @@ export async function unpackProject(
     projectStore.clear();
   }
 
-  // 9. Import verified records into Dexie IDB
+  // 9. Import verified records via Repositories
   let key = get(sessionStore).sessionKey;
   if (!key) {
     await sessionStore.initAnonymousSession();
@@ -231,25 +231,19 @@ export async function unpackProject(
   }
 
   if (!key) {
-    throw new Error('Failed to initialize session encryption key for IndexedDB import.');
+    throw new Error('Failed to initialize session encryption key for import.');
   }
 
-  const encExams = await Promise.all(exams.map((e) => encryptExam(e, key)));
-  const encExercises = await Promise.all(exercises.map((e) => encryptExercise(e, key)));
-  const encStudents = await Promise.all(students.map((st) => encryptStudent(st, key)));
-  const encSubmissions = await Promise.all(submissions.map((sub) => encryptSubmission(sub, key)));
-  const encScores = await Promise.all(exerciseScores.map((es) => encryptScore(es, key)));
-  const encAuditLogs = await Promise.all(auditLogs.map((log) => encryptAuditEntry(log, key)));
+  const { examRepository } = await import('$lib/repositories/examRepository');
+  const { exerciseRepository } = await import('$lib/repositories/exerciseRepository');
+  const { studentRepository } = await import('$lib/repositories/studentRepository');
+  const { submissionRepository } = await import('$lib/repositories/submissionRepository');
 
-  await db.transaction('rw', [db.exams, db.exercises, db.examExercises, db.students, db.submissions, db.exerciseScores, db.auditLog], async () => {
-    if (encExams.length > 0) await db.exams.bulkPut(encExams);
-    if (encExercises.length > 0) await db.exercises.bulkPut(encExercises);
-    if (examExercises.length > 0) await db.examExercises.bulkPut(examExercises);
-    if (encStudents.length > 0) await db.students.bulkPut(encStudents);
-    if (encSubmissions.length > 0) await db.submissions.bulkPut(encSubmissions);
-    if (encScores.length > 0) await db.exerciseScores.bulkPut(encScores);
-    if (encAuditLogs.length > 0) await db.auditLog.bulkPut(encAuditLogs);
-  });
+  for (const e of exams) await examRepository.save(e, key);
+  for (const ex of exercises) await exerciseRepository.save(ex, key);
+  for (const st of students) await studentRepository.save(st, key);
+  for (const sub of submissions) await submissionRepository.save(sub, key);
+
 
   onProgress?.({ stage: 'complete', current: 100, total: 100 });
 

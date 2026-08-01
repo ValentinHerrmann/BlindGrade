@@ -251,7 +251,7 @@
           }, key);
           scannedCount++;
 
-          if ($storagePolicyStore.resultsAndStudentsData === "server") {
+          if ($storagePolicyStore.storageMode === "all-server") {
             try {
               const emptyCtB64 = btoa(String.fromCharCode(0));
               const emptyIvB64 = btoa(
@@ -304,7 +304,7 @@
             }, key);
             scannedCount++;
 
-            if ($storagePolicyStore.resultsAndStudentsData === "server") {
+            if ($storagePolicyStore.storageMode === "all-server") {
               try {
                 const emptyCtB64 = btoa(String.fromCharCode(0));
                 const emptyIvB64 = btoa(

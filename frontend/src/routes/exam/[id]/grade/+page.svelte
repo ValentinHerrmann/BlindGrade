@@ -270,7 +270,7 @@
 
       await saveSubmissionEncrypted(currentSub, key);
 
-      if ($storagePolicyStore.resultsAndStudentsData === "server") {
+      if ($storagePolicyStore.storageMode === "all-server") {
         await api.patch(`/exams/${examId}/submissions/${currentSub.id}/score`, {
           total_score: Number(totalScore),
         });

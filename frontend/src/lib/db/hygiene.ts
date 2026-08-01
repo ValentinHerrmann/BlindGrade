@@ -35,7 +35,8 @@ export async function wipeDatabase(): Promise<boolean> {
 /** Lock the session: wipe keys from store, set lockedAt, and wipe DB if server-synced. */
 export async function lockSession(): Promise<void> {
   sessionStore.lock();
-  if (get(storagePolicyStore).resultsAndStudentsData === 'server') {
+  if (get(storagePolicyStore).storageMode === 'all-server') {
+
     await wipeDatabase();
   }
 }

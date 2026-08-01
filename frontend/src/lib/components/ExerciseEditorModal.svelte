@@ -208,7 +208,7 @@
     try {
       if (isCreatingVersion && versionBaseEx) {
         let savedEx: ExerciseRecord;
-        if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === "server") {
+        if ($isAuthenticated && $storagePolicyStore.storageMode !== "all-local") {
           const res = (await api.post(`/exercises/${versionBaseEx.id}/new-version`, {
             name: editorName,
             topic_tag: editorTopicTag,
@@ -288,7 +288,7 @@
 
       await saveExerciseEncrypted(record, key);
 
-      if ($isAuthenticated && $storagePolicyStore.examAndExerciseStorage === "server") {
+      if ($isAuthenticated && $storagePolicyStore.storageMode !== "all-local") {
         try {
           if (editingExercise) {
             await api.patch(`/exercises/${id}`, {

@@ -71,7 +71,8 @@ export async function eraseStudent(pseudonymId: string, examId: string): Promise
   sessionStore.setDirty(true);
 
   // If server sync enabled, notify server of student erasure
-  if (get(storagePolicyStore).resultsAndStudentsData === 'server') {
+  if (get(storagePolicyStore).storageMode === 'all-server') {
+
     try {
       await api.delete(`/exams/${examId}/students/${targetHash}`);
     } catch (err) {
