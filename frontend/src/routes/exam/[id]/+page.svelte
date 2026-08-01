@@ -692,27 +692,13 @@ ${exerciseInputs}
   {#if !exam}
     <div class="loading">Loading exam details...</div>
   {:else}
-    <div class="header">
-      <div>
-        <h2>{exam.title}</h2>
-        <span class="meta">
-          {exam.testart || "Kurzarbeit"} | Klasse: {exam.klasse || "-"} | Datum:
-          {exam.datum || "-"} | Retention until: {exam.retentionUntil}
-        </span>
-      </div>
+    <div class="page-action-bar">
+      <h3>1. Setup & Exercises Configuration</h3>
       <div class="header-btns">
-        <button class="edit-btn" on:click={openMetadataEditor}
-          >✏️ Edit Exam Details</button
-        >
-        <button class="delete-btn" on:click={handleDeleteExam}
-          >Delete Exam</button
-        >
-        <button
-          class="export-btn"
-          on:click={handleExportArchive}
-          disabled={isExporting}
-        >
-          {isExporting ? "Packing..." : "Export .bgproj Archive"}
+        <button class="edit-btn" on:click={openMetadataEditor}>✏️ Edit Metadata</button>
+        <button class="delete-btn" on:click={handleDeleteExam}>Delete Exam</button>
+        <button class="export-btn" on:click={handleExportArchive} disabled={isExporting}>
+          {isExporting ? "Packing..." : "Export .bgproj"}
         </button>
       </div>
     </div>
@@ -853,23 +839,7 @@ ${exerciseInputs}
       {/if}
     </div>
 
-    <div class="nav-cards">
-      <a href="/exam/{examId}/scan" class="nav-card">
-        <h3>1. Scan Ingestion</h3>
-        <p>Upload PDF/images. Hardware-adaptive QR & OMR processing.</p>
-        <span class="count">{submissions.length} Submissions</span>
-      </a>
-
-      <a href="/exam/{examId}/grade" class="nav-card">
-        <h3>2. Grading View</h3>
-        <p>Anonymous grading with vector canvas overlay.</p>
-      </a>
-
-      <a href="/exam/{examId}/stats" class="nav-card">
-        <h3>3. Statistics & Export</h3>
-        <p>Histogram, std dev, k-anonymity (k≥5) gate & CSV export.</p>
-      </a>
-    </div>
+ 
 
     <div class="exercises-summary">
       <div class="section-header">
@@ -1008,26 +978,22 @@ ${exerciseInputs}
 
 <style>
   .exam-detail-page {
-    max-width: 900px;
-    margin: 2rem auto;
-    padding: 1rem;
+    width: 100%;
   }
 
-  .header {
+  .page-action-bar {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 2rem;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid #334155;
   }
 
-  h2 {
+  .page-action-bar h3 {
     margin: 0;
-    color: #38bdf8;
-  }
-
-  .meta {
-    font-size: 0.875rem;
-    color: #94a3b8;
+    font-size: 1.25rem;
+    color: #f8fafc;
   }
 
   .header-btns {
@@ -1389,6 +1355,47 @@ ${exerciseInputs}
 
   .icon-btn.delete {
     background: #ef4444;
+  }
+
+  .exam-workflow-tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+    background: #1e293b;
+    padding: 0.4rem;
+    border-radius: 8px;
+    border: 1px solid #334155;
+  }
+
+  .tab-btn {
+    flex: 1;
+    text-align: center;
+    padding: 0.6rem 0.85rem;
+    color: #cbd5e1;
+    text-decoration: none;
+    font-weight: 500;
+    font-size: 0.875rem;
+    border-radius: 6px;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+
+  .tab-btn:hover {
+    background: #334155;
+    color: white;
+  }
+
+  .tab-btn.active {
+    background: #0284c7;
+    color: white;
+    font-weight: 600;
+  }
+
+  .tab-btn.highlight {
+    color: #38bdf8;
+  }
+
+  .tab-btn.highlight:hover {
+    background: rgba(2, 132, 199, 0.2);
   }
 
   .modal-backdrop {

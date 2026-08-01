@@ -15,9 +15,11 @@
   import { packProject } from "$lib/archive/packer";
   import { unpackProject } from "$lib/archive/unpacker";
   import StoragePolicyModal from "$lib/components/StoragePolicyModal.svelte";
+  import SessionTimeoutWarning from "$lib/components/SessionTimeoutWarning.svelte";
 
   let fileInput: HTMLInputElement;
   let isSettingsModalOpen = false;
+  let isWorkspaceMenuOpen = false;
 
   function handleFooterClick() {
     if (get(isUnlocked)) {
@@ -49,6 +51,7 @@
   }
 
   function triggerOpenBgproj() {
+    isWorkspaceMenuOpen = false;
     fileInput?.click();
   }
 
@@ -87,6 +90,7 @@
   }
 
   async function handleExportBgproj() {
+    isWorkspaceMenuOpen = false;
     const password = prompt("Enter password to encrypt .bgproj archive:");
     if (!password) return;
 
@@ -107,6 +111,7 @@
   }
 
   async function handleCloseWorkspace() {
+    isWorkspaceMenuOpen = false;
     if (
       !confirm(
         "Are you sure you want to close this project and clear all local workspace data? Unsaved changes will be lost."
@@ -134,6 +139,8 @@
   on:change={handleFileSelected}
 />
 
+<SessionTimeoutWarning />
+
 <div class="app-layout">
   {#if $isUnlocked}
     <header class="app-header">
@@ -146,33 +153,36 @@
       <nav class="nav-links">
         <a href="/">Dashboard</a>
         <a href="/exercises">Exercise Library</a>
+        <a href="/analytics">Analytics</a>
         {#if $sessionStore.role === "admin"}
           <a href="/admin/users">User Management</a>
         {/if}
         <a href="/settings">Settings</a>
       </nav>
       <div class="session-info">
-        <button class="action-btn" on:click={triggerOpenBgproj} title="Open .bgproj File">
-          📂 Open .bgproj
-        </button>
-        <button class="action-btn" on:click={handleExportBgproj} title="Export Workspace to .bgproj">
-          💾 Export .bgproj
-        </button>
-        <button class="action-btn danger" on:click={handleCloseWorkspace} title="Clear Local Workspace Data">
-          ❌ Clear Workspace
-        </button>
+        <div class="workspace-menu-container">
+          <button class="action-btn" on:click={() => (isWorkspaceMenuOpen = !isWorkspaceMenuOpen)}>
+            ⚙️ Workspace ▾
+          </button>
+          {#if isWorkspaceMenuOpen}
+            <div class="workspace-dropdown">
+              <button on:click={triggerOpenBgproj}>📂 Open .bgproj</button>
+              <button on:click={handleExportBgproj}>💾 Export .bgproj</button>
+              <button class="danger" on:click={handleCloseWorkspace}>❌ Clear Workspace</button>
+            </div>
+          {/if}
+        </div>
 
-        {#if $sessionStore.role}
-          <span class="mode-badge">{$sessionStore.role}</span>
-        {/if}
-        {#if $sessionStore.email}
-          <span class="user-email">{$sessionStore.email}</span>
-        {/if}
-
-        {#if !$isAuthenticated}
-          <a href="/unlock" class="login-btn">Log In</a>
-        {:else}
+        {#if $isAuthenticated}
+          <span class="mode-badge cloud">☁️ Cloud Mode</span>
+          {#if $sessionStore.email}
+            <span class="user-email">{$sessionStore.email}</span>
+          {/if}
           <button on:click={handleLock} class="lock-btn">Lock Session</button>
+        {:else}
+          <span class="mode-badge local">💻 Local Mode</span>
+          <a href="/unlock" class="login-btn">Connect to Cloud</a>
+          <button on:click={handleLock} class="lock-btn">Lock</button>
         {/if}
       </div>
     </header>
@@ -297,9 +307,68 @@
     text-transform: capitalize;
     font-size: 0.75rem;
     padding: 0.25rem 0.5rem;
-    background: #0284c7;
     border-radius: 4px;
     font-weight: 600;
+  }
+
+  .mode-badge.cloud {
+    background: #0284c7;
+    color: white;
+  }
+
+  .mode-badge.local {
+    background: #334155;
+    color: #38bdf8;
+    border: 1px solid #0284c7;
+  }
+
+  .workspace-menu-container {
+    position: relative;
+  }
+
+  .workspace-dropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4);
+    display: flex;
+    flex-direction: column;
+    padding: 0.4rem;
+    min-width: 170px;
+    z-index: 1000;
+  }
+
+  .workspace-dropdown button {
+    background: transparent;
+    border: none;
+    color: #cbd5e1;
+    text-align: left;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    transition: background 0.15s ease;
+  }
+
+  .workspace-dropdown button:hover {
+    background: #334155;
+    color: white;
+  }
+
+  .workspace-dropdown button.danger {
+    color: #fca5a5;
+  }
+
+  .workspace-dropdown button.danger:hover {
+    background: #7f1d1d;
+    color: white;
   }
 
   .user-email {

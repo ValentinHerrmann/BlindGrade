@@ -52,6 +52,9 @@ function createSessionStore() {
       role?: 'teacher' | 'admin';
       mode?: 'local' | 'hybrid' | 'authenticated';
     }) {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem('bg_session_locked');
+      }
       update((s) => ({
         ...s,
         mode: params.mode ?? 'authenticated',
@@ -65,8 +68,12 @@ function createSessionStore() {
     },
 
     /** Automatically unlock an anonymous local session with persistent keys in localStorage. */
-    async initAnonymousSession() {
+    async initAnonymousSession(force = false) {
       if (typeof localStorage === 'undefined') return;
+
+      if (!force && localStorage.getItem('bg_session_locked') === 'true') {
+        return;
+      }
 
       let pwd = localStorage.getItem('bg_anon_pwd');
       let saltB64 = localStorage.getItem('bg_anon_salt');
@@ -89,6 +96,8 @@ function createSessionStore() {
       const masterKey = await deriveKey(pwd, salt);
       const sessionKey = await deriveSessionKey(masterKey, sessionNonce);
 
+      localStorage.removeItem('bg_session_locked');
+
       update((s) => ({
         ...s,
         mode: 'local',
@@ -103,13 +112,13 @@ function createSessionStore() {
 
     /** Wipe all key material and lock the UI. */
     lock() {
-      update((s) => ({
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('bg_session_locked', 'true');
+      }
+      set({
         ...INITIAL_STATE,
-        mode: s.mode,
-        email: s.email,
-        role: s.role,
         lockedAt: Date.now(),
-      }));
+      });
     },
 
     setDirty(dirty: boolean) {

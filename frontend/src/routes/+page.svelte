@@ -243,19 +243,41 @@
     </div>
   {:else}
     <div class="dashboard-header">
-      <h2>Exams Dashboard</h2>
+      <div>
+        <h2>Exams Dashboard</h2>
+        <p class="header-subtitle">Manage, grade, and analyze your Schulaufgabe exams</p>
+      </div>
       <div class="header-actions">
         <label for="importFile" class="import-btn">
-          {isImporting ? 'Importing...' : 'Import .bgproj'}
+          {isImporting ? 'Importing...' : '📂 Import .bgproj'}
         </label>
         <input type="file" id="importFile" accept=".bgproj" on:change={handleImportArchive} disabled={isImporting} hidden />
-        <a href="/exam/new" class="create-btn">+ Create New Exam</a>
+        <a href="/exam/new" class="create-btn">➕ Create New Exam</a>
       </div>
     </div>
 
     {#if importStatus}
       <div class="import-status">{importStatus}</div>
     {/if}
+
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <span class="kpi-title">Total Exams</span>
+        <span class="kpi-value">{exams.length}</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-title">Configured Subjects</span>
+        <span class="kpi-value">{availableSubjects.length}</span>
+      </div>
+      <div class="kpi-card">
+        <span class="kpi-title">Grade Levels</span>
+        <span class="kpi-value">{availableGrades.length}</span>
+      </div>
+      <div class="kpi-card highlight">
+        <span class="kpi-title">Global Analytics</span>
+        <a href="/analytics" class="kpi-link">View Multi-Exam Stats →</a>
+      </div>
+    </div>
 
     {#if expiredExam}
       <div class="modal-overlay">
@@ -275,9 +297,41 @@
     {/if}
 
     {#if exams.length === 0}
-      <div class="empty-state">
-        <p>No exams found in current session.</p>
-        <p class="sub">Create a new exam or import a .bgproj archive above.</p>
+      <div class="onboarding-card">
+        <div class="onboarding-icon">🎓</div>
+        <h3>Welcome to Examance!</h3>
+        <p>You don't have any exams in your workspace yet. Follow these quick steps to get started:</p>
+
+        <div class="onboarding-steps">
+          <div class="step-item">
+            <span class="step-num">1</span>
+            <div class="step-text">
+              <strong>Create an Exam</strong>
+              <p>Configure LaTeX template, total points, and grade thresholds.</p>
+            </div>
+          </div>
+
+          <div class="step-item">
+            <span class="step-num">2</span>
+            <div class="step-text">
+              <strong>Link Exercises</strong>
+              <p>Add questions from your Exercise Library or create new ones.</p>
+            </div>
+          </div>
+
+          <div class="step-item">
+            <span class="step-num">3</span>
+            <div class="step-text">
+              <strong>Scan & Grade</strong>
+              <p>Upload student PDFs, anonymously score, and review analytics.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="onboarding-actions">
+          <a href="/exam/new" class="create-btn">+ Create First Exam</a>
+          <label for="importFile" class="import-btn">Or Import .bgproj Archive</label>
+        </div>
       </div>
     {:else}
       <div class="dashboard-filter-bar">
@@ -353,6 +407,137 @@
     padding: 2rem;
     max-width: 1000px;
     margin: 0 auto;
+  }
+
+  .header-subtitle {
+    margin: 0.35rem 0 0 0;
+    font-size: 0.9rem;
+    color: #94a3b8;
+  }
+
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-bottom: 2rem;
+  }
+
+  .kpi-card {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .kpi-card.highlight {
+    border-color: #0284c7;
+    background: rgba(2, 132, 199, 0.1);
+  }
+
+  .kpi-title {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: #94a3b8;
+  }
+
+  .kpi-value {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: #f8fafc;
+  }
+
+  .kpi-link {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #38bdf8;
+    text-decoration: none;
+    margin-top: auto;
+  }
+
+  .kpi-link:hover {
+    text-decoration: underline;
+  }
+
+  .onboarding-card {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    padding: 2.5rem 2rem;
+    text-align: center;
+    max-width: 680px;
+    margin: 2rem auto;
+  }
+
+  .onboarding-icon {
+    font-size: 3rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .onboarding-card h3 {
+    margin: 0 0 0.5rem 0;
+    font-size: 1.5rem;
+    color: #38bdf8;
+  }
+
+  .onboarding-card p {
+    color: #cbd5e1;
+    font-size: 0.95rem;
+    margin-bottom: 2rem;
+  }
+
+  .onboarding-steps {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1.25rem;
+    margin-bottom: 2rem;
+    text-align: left;
+  }
+
+  .step-item {
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .step-num {
+    width: 28px;
+    height: 28px;
+    background: #0284c7;
+    color: white;
+    font-weight: 700;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.85rem;
+  }
+
+  .step-text strong {
+    color: #f8fafc;
+    font-size: 0.9rem;
+    display: block;
+    margin-bottom: 0.25rem;
+  }
+
+  .step-text p {
+    margin: 0;
+    font-size: 0.8rem;
+    color: #94a3b8;
+    line-height: 1.35;
+  }
+
+  .onboarding-actions {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+    flex-wrap: wrap;
   }
 
   .dashboard-header {
