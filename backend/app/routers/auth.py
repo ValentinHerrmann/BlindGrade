@@ -27,7 +27,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 ACCESS_COOKIE = "access_token"
 REFRESH_COOKIE = "refresh_token"
 
-_COOKIE_KWARGS = dict(httponly=True, secure=not settings.is_dev, samesite="strict")
+_COOKIE_KWARGS = dict(httponly=True, secure=True, samesite="none")
 
 
 def _set_auth_cookies(
