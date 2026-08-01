@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { beforeNavigate } from "$app/navigation";
+  import { page } from "$app/stores";
+  import { goto, beforeNavigate } from "$app/navigation";
   import { get } from "svelte/store";
   import { registerHygieneListeners, lockSession } from "$lib/db/hygiene";
   import { db, clearAllTables } from "$lib/db/db";
@@ -20,6 +21,11 @@
   let fileInput: HTMLInputElement;
   let isSettingsModalOpen = false;
   let isWorkspaceMenuOpen = false;
+  let isInitializing = true;
+
+  $: if (!isInitializing && !$isUnlocked && typeof window !== "undefined" && $page.url.pathname !== "/unlock") {
+    goto("/unlock");
+  }
 
   function handleFooterClick() {
     if (get(isUnlocked)) {
@@ -31,9 +37,20 @@
 
   onMount(async () => {
     registerHygieneListeners();
-    if (!get(isUnlocked)) {
-      await sessionStore.initAnonymousSession();
+    const isLockedInStorage =
+      typeof localStorage !== "undefined" &&
+      localStorage.getItem("bg_session_locked") === "true";
+
+    if (isLockedInStorage) {
+      if ($page.url.pathname !== "/unlock") {
+        await goto("/unlock");
+      }
+    } else {
+      if (!get(isUnlocked)) {
+        await sessionStore.initAnonymousSession();
+      }
     }
+    isInitializing = false;
   });
 
   beforeNavigate(({ cancel }) => {
@@ -142,7 +159,7 @@
 <SessionTimeoutWarning />
 
 <div class="app-layout">
-  {#if $isUnlocked}
+  {#if $isUnlocked && $page.url.pathname !== "/unlock"}
     <header class="app-header">
       <div class="brand">
         <a href="/">

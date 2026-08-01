@@ -46,6 +46,9 @@ export async function lockSession(): Promise<void> {
   if (get(storagePolicyStore).storageMode === 'all-server') {
     await wipeDatabase();
   }
+  if (typeof window !== 'undefined' && window.location.pathname !== '/unlock') {
+    window.location.href = '/unlock';
+  }
 }
 
 /** Inactivity timeout in milliseconds (60 minutes). */
@@ -91,6 +94,16 @@ export function registerHygieneListeners(): void {
   const ACTIVITY_EVENTS = ['mousemove', 'keydown', 'pointerdown', 'scroll', 'touchstart'];
   ACTIVITY_EVENTS.forEach((evt) => window.addEventListener(evt, resetTimeout, { passive: true }));
   resetTimeout(); // Start timer immediately
+
+  // Force full logout on Ctrl+F5 / Ctrl+R (hard reload)
+  window.addEventListener('keydown', (e: KeyboardEvent) => {
+    if (
+      (e.ctrlKey || e.metaKey) &&
+      (e.key === 'F5' || e.code === 'F5' || e.key === 'r' || e.key === 'R' || e.code === 'KeyR')
+    ) {
+      lockSession();
+    }
+  });
 
   // Inactivity timeout — lock session on timeout (data remains safe encrypted at rest)
   document.addEventListener('visibilitychange', () => {

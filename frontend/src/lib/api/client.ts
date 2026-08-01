@@ -57,8 +57,7 @@ async function refreshToken(): Promise<void> {
       credentials: 'include',
     });
     if (!resp.ok) {
-      const session = get(sessionStore);
-      if (session && session.email && typeof window !== 'undefined') {
+      if (typeof window !== 'undefined' && window.location.pathname !== '/unlock') {
         window.location.href = '/unlock';
       }
       throw new ApiError(resp.status, 'ERR_SESSION_EXPIRED', 'Session expired');
