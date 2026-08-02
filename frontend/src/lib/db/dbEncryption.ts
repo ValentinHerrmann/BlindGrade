@@ -18,6 +18,7 @@ import type {
   StudentRecord,
   SubmissionRecord,
   AuditEntry,
+  GradingKeyConfig,
 } from './schema';
 
 const encoder = new TextEncoder();
@@ -50,6 +51,7 @@ interface ExamPayload {
   latexPreamble?: string;
   latexTemplate?: string;
   numVersions?: number;
+  gradingKey?: GradingKeyConfig;
 }
 
 export async function encryptExam(exam: ExamRecord, key: CryptoKey | null): Promise<ExamRecord> {
@@ -65,6 +67,7 @@ export async function encryptExam(exam: ExamRecord, key: CryptoKey | null): Prom
     latexPreamble: exam.latexPreamble,
     latexTemplate: exam.latexTemplate,
     numVersions: exam.numVersions,
+    gradingKey: exam.gradingKey,
   };
 
   let payloadCt = exam.payloadCt;

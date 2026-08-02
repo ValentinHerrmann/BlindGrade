@@ -8,6 +8,17 @@
  * The IDB wipe in hygiene.ts is best-effort UX — not relied upon for security.
  */
 
+export interface GradeCutoff {
+  grade: string;      // e.g. "1", "2", "3", "4", "5", "6"
+  label: string;      // e.g. "Sehr gut", "Gut", etc.
+  minPercentage: number; // e.g. 90 (90%)
+}
+
+export interface GradingKeyConfig {
+  preset: 'linear_50' | 'linear_40' | 'even_split' | 'custom';
+  cutoffs: GradeCutoff[];
+}
+
 export interface ExamRecord {
   id: string;            // UUID
   teacherId: string;
@@ -22,6 +33,7 @@ export interface ExamRecord {
   latexPreamble?: string;
   latexTemplate?: string;
   numVersions?: number;
+  gradingKey?: GradingKeyConfig;
   retentionUntil: string;  // ISO date string
   compilationStatus: 'pending' | 'compiled' | 'failed';
   createdAt: string;

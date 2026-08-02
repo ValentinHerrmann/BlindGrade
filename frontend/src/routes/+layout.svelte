@@ -22,6 +22,9 @@
   let isSettingsModalOpen = false;
   let isWorkspaceMenuOpen = false;
   let isInitializing = true;
+  let showFocusNav = false;
+
+  $: isGradeActive = $page.url.pathname.includes("/exam/") && $page.url.pathname.endsWith("/grade");
 
   $: if (!isInitializing && !$isUnlocked && typeof window !== "undefined" && $page.url.pathname !== "/unlock") {
     goto("/unlock");
@@ -160,49 +163,51 @@
 
 <div class="app-layout">
   {#if $isUnlocked && $page.url.pathname !== "/unlock"}
-    <header class="app-header">
-      <div class="brand">
-        <a href="/">
-          <img src="/favicon.png" alt="Examance logo" class="brand-logo" />
-          <span>Examance</span>
-        </a>
-      </div>
-      <nav class="nav-links">
-        <a href="/">Dashboard</a>
-        <a href="/exercises">Exercise Library</a>
-        <a href="/analytics">Analytics</a>
-        {#if $sessionStore.role === "admin"}
-          <a href="/admin/users">User Management</a>
-        {/if}
-        <a href="/settings">Settings</a>
-      </nav>
-      <div class="session-info">
-        <div class="workspace-menu-container">
-          <button class="action-btn" on:click={() => (isWorkspaceMenuOpen = !isWorkspaceMenuOpen)}>
-            ⚙️ Workspace ▾
-          </button>
-          {#if isWorkspaceMenuOpen}
-            <div class="workspace-dropdown">
-              <button on:click={triggerOpenBgproj}>📂 Open .bgproj</button>
-              <button on:click={handleExportBgproj}>💾 Export .bgproj</button>
-              <button class="danger" on:click={handleCloseWorkspace}>❌ Clear Workspace</button>
-            </div>
+    {#if !isGradeActive || showFocusNav}
+      <header class="app-header">
+        <div class="brand">
+          <a href="/">
+            <img src="/favicon.png" alt="Examance logo" class="brand-logo" />
+            <span>Examance</span>
+          </a>
+        </div>
+        <nav class="nav-links">
+          <a href="/">Dashboard</a>
+          <a href="/exercises">Exercise Library</a>
+          <a href="/analytics">Analytics</a>
+          {#if $sessionStore.role === "admin"}
+            <a href="/admin/users">User Management</a>
+          {/if}
+          <a href="/settings">Settings</a>
+        </nav>
+        <div class="session-info">
+          <div class="workspace-menu-container">
+            <button class="action-btn" on:click={() => (isWorkspaceMenuOpen = !isWorkspaceMenuOpen)}>
+              ⚙️ Workspace ▾
+            </button>
+            {#if isWorkspaceMenuOpen}
+              <div class="workspace-dropdown">
+                <button on:click={triggerOpenBgproj}>📂 Open .bgproj</button>
+                <button on:click={handleExportBgproj}>💾 Export .bgproj</button>
+                <button class="danger" on:click={handleCloseWorkspace}>❌ Clear Workspace</button>
+              </div>
+            {/if}
+          </div>
+
+          {#if $isAuthenticated}
+            <span class="mode-badge cloud">☁️ Cloud Mode</span>
+            {#if $sessionStore.email}
+              <span class="user-email">{$sessionStore.email}</span>
+            {/if}
+            <button on:click={handleLock} class="lock-btn">Lock Session</button>
+          {:else}
+            <span class="mode-badge local">💻 Local Mode</span>
+            <a href="/unlock" class="login-btn">Connect to Cloud</a>
+            <button on:click={handleLock} class="lock-btn">Lock</button>
           {/if}
         </div>
-
-        {#if $isAuthenticated}
-          <span class="mode-badge cloud">☁️ Cloud Mode</span>
-          {#if $sessionStore.email}
-            <span class="user-email">{$sessionStore.email}</span>
-          {/if}
-          <button on:click={handleLock} class="lock-btn">Lock Session</button>
-        {:else}
-          <span class="mode-badge local">💻 Local Mode</span>
-          <a href="/unlock" class="login-btn">Connect to Cloud</a>
-          <button on:click={handleLock} class="lock-btn">Lock</button>
-        {/if}
-      </div>
-    </header>
+      </header>
+    {/if}
   {/if}
 
   <main class="app-main">
@@ -452,7 +457,10 @@
 
   .app-main {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
+    display: flex;
+    flex-direction: column;
   }
 
   .vscode-statusbar {

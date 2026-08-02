@@ -44,6 +44,10 @@ export const submissionRepository = {
           pseudonymHash: s.pseudonym_hmac || s.pseudonymHash,
           totalScore: s.total_score ?? s.totalScore ?? 0,
           createdAt: s.created_at || s.createdAt || new Date().toISOString(),
+          scanCt: s.scan_ciphertext_b64 ? base64ToUint8Array(s.scan_ciphertext_b64) : undefined,
+          scanIv: s.scan_iv_b64 ? base64ToUint8Array(s.scan_iv_b64) : undefined,
+          annotationCt: s.annotation_ciphertext_b64 ? base64ToUint8Array(s.annotation_ciphertext_b64) : undefined,
+          annotationIv: s.annotation_iv_b64 ? base64ToUint8Array(s.annotation_iv_b64) : undefined,
         }));
       } catch {
         return [];

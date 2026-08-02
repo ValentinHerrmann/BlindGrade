@@ -13,6 +13,9 @@
   import LatexViewer from "$lib/components/LatexViewer.svelte";
   import ExerciseEditorModal from "$lib/components/ExerciseEditorModal.svelte";
   import DualPdfPreview from "$lib/components/DualPdfPreview.svelte";
+  import GradingKeyEditor from "$lib/components/GradingKeyEditor.svelte";
+  import { getPresetCutoffs } from "$lib/analytics/gradingKey";
+  import type { GradingKeyConfig } from "$lib/db/schema";
 
   // Metadata
   let title = "";
@@ -27,6 +30,11 @@
     \\item Mit Bleistift oder rot/rosa Geschriebenes kann \\textbf{nicht} gewertet werden!
 \\end{itemize}`;
   let retentionDays = 365;
+
+  let gradingKey: GradingKeyConfig = {
+    preset: "linear_50",
+    cutoffs: getPresetCutoffs("linear_50"),
+  };
 
   // Library & Selection state
   let libraryExercises: ExerciseRecord[] = [];
@@ -448,6 +456,7 @@ ${exerciseInputs}
         fach,
         lehrernachname,
         infoText,
+        gradingKey,
         retentionUntil,
         compilationStatus: "pending",
         createdAt: new Date().toISOString(),
@@ -582,6 +591,11 @@ ${exerciseInputs}
         <label for="info">Header Info Instructions (\\Info)</label>
         <textarea id="info" rows="2" bind:value={infoText}></textarea>
       </div>
+    </div>
+
+    <!-- Grading Key Section -->
+    <div class="mb-6">
+      <GradingKeyEditor bind:gradingKey />
     </div>
 
     <!-- Exercise Selection Section -->

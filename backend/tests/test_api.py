@@ -7,9 +7,10 @@ import uuid
 from datetime import date, timedelta
 
 import pytest
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.main import app
 from app.models.teacher import Teacher
 from app.services.crypto import hash_password, generate_invite_token, hash_token
 from app.models.invite import InviteToken
@@ -514,101 +515,93 @@ async def test_cors_preflight_origins(client: AsyncClient) -> None:
 
 
 async def test_list_student_identities(
-    async_client: AsyncClient,
-    teacher_token: str,
-    teacher2_token: str,
+    client: AsyncClient,
+    db: AsyncSession,
 ) -> None:
     """GET /api/v1/exams/{exam_id}/students returns student identities for an exam."""
-    # Create an exam
-    exam_resp = await async_client.post(
+    await _create_teacher_and_login(client, db, "studentteacher1@example.com")
+
+    retention_date = (date.today() + timedelta(days=365)).isoformat()
+    exam_resp = await client.post(
         "/api/v1/exams",
-        json={"title": "Student List Exam"},
-        headers={"Authorization": f"Bearer {teacher_token}"},
+        json={"title": "Student List Exam", "retention_until": retention_date},
     )
     assert exam_resp.status_code == 201
     exam_id = exam_resp.json()["id"]
 
     # GET students list should be empty
-    list_resp = await async_client.get(
-        f"/api/v1/exams/{exam_id}/students",
-        headers={"Authorization": f"Bearer {teacher_token}"},
-    )
+    list_resp = await client.get(f"/api/v1/exams/{exam_id}/students")
     assert list_resp.status_code == 200
     assert list_resp.json() == []
 
     # POST a student identity
     pseudonym_hmac = secrets.token_hex(32)
-    st_resp = await async_client.post(
+    st_resp = await client.post(
         f"/api/v1/exams/{exam_id}/students",
         json={
             "pseudonym_hmac": pseudonym_hmac,
             "pii_ciphertext_b64": base64.b64encode(b"fake-encrypted-pii").decode(),
-            "iv_b64": base64.b64encode(os.urandom(16)).decode(),
-            "encryption_salt_b64": base64.b64encode(os.urandom(32)).decode(),
+            "iv_b64": base64.b64encode(secrets.token_bytes(16)).decode(),
+            "encryption_salt_b64": base64.b64encode(secrets.token_bytes(32)).decode(),
         },
-        headers={"Authorization": f"Bearer {teacher_token}"},
     )
     assert st_resp.status_code == 201
 
     # GET students list should now have 1 entry
-    list_resp = await async_client.get(
-        f"/api/v1/exams/{exam_id}/students",
-        headers={"Authorization": f"Bearer {teacher_token}"},
-    )
+    list_resp = await client.get(f"/api/v1/exams/{exam_id}/students")
     assert list_resp.status_code == 200
     students = list_resp.json()
     assert len(students) == 1
     assert students[0]["pseudonym_hmac"] == pseudonym_hmac
 
-    # Different teacher should get 404 (ownership check)
-    list_resp2 = await async_client.get(
-        f"/api/v1/exams/{exam_id}/students",
-        headers={"Authorization": f"Bearer {teacher2_token}"},
-    )
-    assert list_resp2.status_code == 404
+    # Different teacher should get 401 (ownership check — never leak resource existence)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="https://test") as client2:
+        await _create_teacher_and_login(client2, db, "studentteacher2@example.com")
+        list_resp2 = await client2.get(f"/api/v1/exams/{exam_id}/students")
+        assert list_resp2.status_code == 401
 
 
 async def test_create_exam_wrong_method(
-    async_client: AsyncClient,
-    teacher_token: str,
-    teacher2_token: str,
+    client: AsyncClient,
+    db: AsyncSession,
 ) -> None:
-    """POST /api/v1/exams/{exam_id}/students returns 404 if exam_id is not found."""
-    # Create an exam
-    exam_resp = await async_client.post(
+    """POST /api/v1/exams/{exam_id}/students returns 401 if exam_id is not found or owned by another."""
+    await _create_teacher_and_login(client, db, "studentteacher3@example.com")
+
+    retention_date = (date.today() + timedelta(days=365)).isoformat()
+    exam_resp = await client.post(
         "/api/v1/exams",
-        json={"title": "Student List Exam"},
-        headers={"Authorization": f"Bearer {teacher_token}"},
+        json={"title": "Student List Exam", "retention_until": retention_date},
     )
     assert exam_resp.status_code == 201
     exam_id = exam_resp.json()["id"]
 
     # POST a student identity
     pseudonym_hmac = secrets.token_hex(32)
-    st_resp = await async_client.post(
+    st_resp = await client.post(
         f"/api/v1/exams/{exam_id}/students",
         json={
             "pseudonym_hmac": pseudonym_hmac,
             "pii_ciphertext_b64": base64.b64encode(b"fake-encrypted-pii").decode(),
-            "iv_b64": base64.b64encode(os.urandom(16)).decode(),
-            "encryption_salt_b64": base64.b64encode(os.urandom(32)).decode(),
+            "iv_b64": base64.b64encode(secrets.token_bytes(16)).decode(),
+            "encryption_salt_b64": base64.b64encode(secrets.token_bytes(32)).decode(),
         },
-        headers={"Authorization": f"Bearer {teacher_token}"},
     )
     assert st_resp.status_code == 201
 
     # POST a student identity to a non-existent exam
-    st_resp2 = await async_client.post(
-        "/api/v1/exams/invalid-exam-id/students",
-        json={
-            "pseudonym_hmac": pseudonym_hmac,
-            "pii_ciphertext_b64": base64.b64encode(b"fake-encrypted-pii").decode(),
-            "iv_b64": base64.b64encode(os.urandom(16)).decode(),
-            "encryption_salt_b64": base64.b64encode(os.urandom(32)).decode(),
-        },
-        headers={"Authorization": f"Bearer {teacher2_token}"},
-    )
-    assert st_resp2.status_code == 404
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="https://test") as client2:
+        await _create_teacher_and_login(client2, db, "studentteacher4@example.com")
+        st_resp2 = await client2.post(
+            "/api/v1/exams/00000000-0000-0000-0000-000000000000/students",
+            json={
+                "pseudonym_hmac": pseudonym_hmac,
+                "pii_ciphertext_b64": base64.b64encode(b"fake-encrypted-pii").decode(),
+                "iv_b64": base64.b64encode(secrets.token_bytes(16)).decode(),
+                "encryption_salt_b64": base64.b64encode(secrets.token_bytes(32)).decode(),
+            },
+        )
+        assert st_resp2.status_code == 401
 
 
 

@@ -31,6 +31,9 @@
   import { get } from "svelte/store";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import DualPdfPreview from "$lib/components/DualPdfPreview.svelte";
+  import GradingKeyEditor from "$lib/components/GradingKeyEditor.svelte";
+  import { getPresetCutoffs } from "$lib/analytics/gradingKey";
+  import type { GradingKeyConfig } from "$lib/db/schema";
 
   $: examId = $page.params.id || "";
 
@@ -461,6 +464,10 @@ ${exerciseInputs}
   let editLehrernachname = "";
   let editInfoText = "";
   let editRetentionUntil = "";
+  let editGradingKey: GradingKeyConfig = {
+    preset: "linear_50",
+    cutoffs: getPresetCutoffs("linear_50"),
+  };
 
   let initialMetadata = {
     title: "",
@@ -510,6 +517,10 @@ ${exerciseInputs}
     editLehrernachname = exam.lehrernachname || "";
     editInfoText = exam.infoText || "";
     editRetentionUntil = exam.retentionUntil || "";
+    editGradingKey = exam.gradingKey || {
+      preset: "linear_50",
+      cutoffs: getPresetCutoffs("linear_50"),
+    };
 
     initialMetadata = {
       title: editTitle,
@@ -565,6 +576,7 @@ ${exerciseInputs}
       exam.lehrernachname = editLehrernachname;
       exam.infoText = editInfoText;
       exam.retentionUntil = editRetentionUntil;
+      exam.gradingKey = editGradingKey;
       const key = get(sessionStore).sessionKey;
       await saveExamEncrypted(exam, key);
 
@@ -752,6 +764,9 @@ ${exerciseInputs}
           <label for="editInfoText">Info Text (LaTeX list)</label>
           <textarea id="editInfoText" rows="4" bind:value={editInfoText}
           ></textarea>
+        </div>
+        <div class="mt-4 mb-2">
+          <GradingKeyEditor bind:gradingKey={editGradingKey} />
         </div>
         <div class="editor-actions">
           <button

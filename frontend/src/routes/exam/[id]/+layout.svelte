@@ -35,8 +35,8 @@
   $: isStatsActive = pathname.startsWith(`/exam/${examId}/stats`);
 </script>
 
-<div class="exam-layout">
-  {#if exam}
+<div class="exam-layout" class:is-grading={isGradeActive}>
+  {#if exam && !isGradeActive}
     <div class="exam-header-bar">
       <div class="header-main">
         <h2>{exam.title || "Exam"}</h2>
@@ -62,34 +62,45 @@
 
 <style>
   .exam-layout {
-    padding: 2rem;
-    max-width: 1400px;
-    width: 95%;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    padding: 0.75rem 1.25rem;
+    max-width: 100%;
+    width: 100%;
     margin: 0 auto;
+    box-sizing: border-box;
+  }
+
+  .exam-layout.is-grading {
+    padding: 0;
+    height: 100%;
   }
 
   .exam-header-bar {
+    flex-shrink: 0;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 1.25rem;
+    margin-bottom: 0.5rem;
   }
 
   .header-main h2 {
-    margin: 0 0 0.35rem 0;
-    font-size: 1.85rem;
+    margin: 0 0 0.15rem 0;
+    font-size: 1.35rem;
     color: #38bdf8;
   }
 
   .meta {
-    font-size: 0.9rem;
+    font-size: 0.8rem;
     color: #94a3b8;
   }
 
   .back-link {
     color: #94a3b8;
     text-decoration: none;
-    font-size: 0.9rem;
+    font-size: 0.85rem;
     font-weight: 500;
   }
 
@@ -98,11 +109,12 @@
   }
 
   .exam-workflow-tabs {
+    flex-shrink: 0;
     display: flex;
-    gap: 0.5rem;
-    margin-bottom: 2rem;
+    gap: 0.35rem;
+    margin-bottom: 0.5rem;
     background: #1e293b;
-    padding: 0.4rem;
+    padding: 0.25rem;
     border-radius: 8px;
     border: 1px solid #334155;
   }
@@ -110,11 +122,11 @@
   .tab-btn {
     flex: 1;
     text-align: center;
-    padding: 0.65rem 0.85rem;
+    padding: 0.4rem 0.65rem;
     color: #cbd5e1;
     text-decoration: none;
     font-weight: 500;
-    font-size: 0.875rem;
+    font-size: 0.825rem;
     border-radius: 6px;
     transition: background 0.15s ease, color 0.15s ease;
   }
@@ -139,6 +151,10 @@
   }
 
   .exam-content {
+    flex: 1;
+    min-height: 0;
     width: 100%;
+    display: flex;
+    flex-direction: column;
   }
 </style>

@@ -39,6 +39,8 @@ async def list_submissions(
             pseudonym_hmac=s.pseudonym_hmac,
             total_score=s.total_score,
             scan_iv_b64=base64.b64encode(s.scan_iv).decode() if s.scan_iv else None,
+            annotation_ciphertext_b64=base64.b64encode(s.annotation_ciphertext).decode() if s.annotation_ciphertext else None,
+            annotation_iv_b64=base64.b64encode(s.annotation_iv).decode() if s.annotation_iv else None,
             created_at=s.created_at,
         )
         for s in subs
@@ -94,6 +96,9 @@ async def upload_submission(
             if ann_bytes is not None:
                 existing_sub.annotation_ciphertext = ann_bytes
                 existing_sub.annotation_iv = ann_iv
+            elif body.annotation_ciphertext_b64 is None:
+                existing_sub.annotation_ciphertext = None
+                existing_sub.annotation_iv = None
             await db.flush()
             return SubmissionResponse(
                 id=existing_sub.id,
@@ -193,7 +198,9 @@ async def update_score(
         exam_id=sub.exam_id,
         pseudonym_hmac=sub.pseudonym_hmac,
         total_score=sub.total_score,
-        scan_iv_b64=base64.b64encode(sub.scan_iv).decode(),
+        scan_iv_b64=base64.b64encode(sub.scan_iv).decode() if sub.scan_iv else None,
+        annotation_ciphertext_b64=base64.b64encode(sub.annotation_ciphertext).decode() if sub.annotation_ciphertext else None,
+        annotation_iv_b64=base64.b64encode(sub.annotation_iv).decode() if sub.annotation_iv else None,
         created_at=sub.created_at,
     )
 
