@@ -113,3 +113,25 @@ async def erase_student_identity(
         target_id=pseudonym_hmac,
         request_ip=request.client.host if request.client else None,
     )
+
+
+@router.get("", response_model=list[StudentIdentityResponse])
+async def list_student_identities(
+    exam: Exam = Depends(get_exam_for_teacher),
+    db: AsyncSession = Depends(get_db),
+) -> list[StudentIdentityResponse]:
+    """List all encrypted student identities for an exam."""
+    result = await db.execute(
+        select(StudentIdentity).where(StudentIdentity.exam_id == exam.id)
+    )
+    identities = result.scalars().all()
+    return [
+        StudentIdentityResponse(
+            pseudonym_hmac=st.pseudonym_hmac,
+            exam_id=st.exam_id,
+            pii_ciphertext_b64=base64.b64encode(st.pii_ciphertext).decode(),
+            iv_b64=base64.b64encode(st.iv).decode(),
+            encryption_salt_b64=base64.b64encode(st.encryption_salt).decode(),
+        )
+        for st in identities
+    ]
