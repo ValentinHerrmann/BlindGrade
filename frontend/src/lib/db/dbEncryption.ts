@@ -306,11 +306,15 @@ export async function decryptScore(scoreRec: ExerciseScoreRecord, key: CryptoKey
 
 interface StudentPayload {
   fallbackCode?: string;
+  studentName?: string;
+  studentNumber?: string;
 }
 
 export async function encryptStudent(student: StudentRecord, key: CryptoKey | null): Promise<StudentRecord> {
   const payload: StudentPayload = {
     fallbackCode: student.fallbackCode,
+    studentName: student.studentName,
+    studentNumber: student.studentNumber,
   };
 
   let payloadCt = student.payloadCt;
@@ -326,6 +330,8 @@ export async function encryptStudent(student: StudentRecord, key: CryptoKey | nu
   return {
     pseudonymId: student.pseudonymId,
     examId: student.examId,
+    studentName: student.studentName,
+    studentNumber: student.studentNumber,
     piiCt: student.piiCt,
     piiIv: student.piiIv,
     payloadCt,
@@ -337,6 +343,9 @@ export async function decryptStudent(student: StudentRecord, key: CryptoKey | nu
   const baseRecord: StudentRecord = {
     pseudonymId: student.pseudonymId,
     examId: student.examId,
+    fallbackCode: student.fallbackCode,
+    studentName: student.studentName,
+    studentNumber: student.studentNumber,
     piiCt: student.piiCt,
     piiIv: student.piiIv,
     payloadCt: student.payloadCt,

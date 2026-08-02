@@ -84,11 +84,15 @@ export interface StudentRecord {
   examId: string;
   /** Human-readable fallback code (e.g. "A-X7K2M9") for unreadable QR codes. */
   fallbackCode?: string;
+  /** Decrypted student full name if available (e.g. "Erika Mustermann"). */
+  studentName?: string;
+  /** Decrypted student ID number if available (e.g. "123456"). */
+  studentNumber?: string;
   /** AES-256-GCM ciphertext of PII (name, student number, etc.). */
   piiCt: Uint8Array;
   /** 12-byte GCM IV for piiCt. */
   piiIv: Uint8Array;
-  /** AES-256-GCM encrypted payload containing fallbackCode. */
+  /** AES-256-GCM encrypted payload containing fallbackCode, studentName, studentNumber. */
   payloadCt?: Uint8Array;
   /** 12-byte GCM IV for payloadCt. */
   payloadIv?: Uint8Array;

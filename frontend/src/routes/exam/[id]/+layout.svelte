@@ -63,7 +63,8 @@
 <style>
   .exam-layout {
     padding: 2rem;
-    max-width: 1060px;
+    max-width: 1400px;
+    width: 95%;
     margin: 0 auto;
   }
 

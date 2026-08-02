@@ -36,7 +36,7 @@ self.onmessage = async (event: MessageEvent<QrWorkerRequest>) => {
             type: 'QR_RESULT',
             pseudonymId: rawValue,
             version: 'A',
-            fallbackCode: rawValue.substring(0, 8),
+            fallbackCode: rawValue,
             rawText: rawValue,
           });
           return;
@@ -67,7 +67,7 @@ self.onmessage = async (event: MessageEvent<QrWorkerRequest>) => {
             type: 'QR_RESULT',
             pseudonymId: rawValue,
             version: 'A',
-            fallbackCode: rawValue.substring(0, 8),
+            fallbackCode: rawValue,
             rawText: rawValue,
           });
           return;

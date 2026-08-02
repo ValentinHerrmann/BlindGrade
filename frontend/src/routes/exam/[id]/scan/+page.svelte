@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page } from "$app/stores";
+  import { browser } from "$app/environment";
   import {
     detectHardware,
     PipelineMonitor,
@@ -19,14 +20,17 @@
   import { api } from "$lib/api/client";
   import { submissionRepository } from "$lib/repositories/submissionRepository";
   import { studentRepository } from "$lib/repositories/studentRepository";
+  import type { StudentRecord } from "$lib/db/schema";
   import { onMount, onDestroy } from "svelte";
   import { get } from "svelte/store";
   import { WorkerPool } from "$lib/workers/pool";
-  import { browser } from "$app/environment";
   import type {
     QrWorkerRequest,
     QrWorkerResponse,
   } from "$lib/workers/qrWorker";
+  import { parseStudentQr } from "$lib/utils/studentQr";
+  import ZoomableImage from "$lib/components/ZoomableImage.svelte";
+  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
 
   const examId = $page.params.id || "";
 
@@ -54,6 +58,8 @@
     id: string;
     pseudonymHash: string;
     fallbackCode: string;
+    studentName?: string;
+    studentNumber?: string;
     createdAt: string;
     scanCt?: Uint8Array;
     scanIv?: Uint8Array;
@@ -101,19 +107,63 @@
     const submissions = await submissionRepository.getByExamId(examId, key);
     const students = await studentRepository.getByExamId(examId, key);
 
-    const studentMap = new Map<string, string>();
+    const studentMap = new Map<string, StudentRecord>();
     for (const st of students) {
-      studentMap.set(st.pseudonymId, st.fallbackCode || st.pseudonymId);
+      if (st.pseudonymId) {
+        studentMap.set(st.pseudonymId, st);
+        const hex = await ensure64CharHex(st.pseudonymId);
+        studentMap.set(hex, st);
+      }
+      if (st.fallbackCode) {
+        studentMap.set(st.fallbackCode, st);
+      }
     }
 
-    scannedSubmissions = submissions.map((sub) => ({
-      id: sub.id,
-      pseudonymHash: sub.pseudonymHash,
-      fallbackCode: studentMap.get(sub.pseudonymHash) || "UNKNOWN",
-      createdAt: sub.createdAt || new Date().toISOString(),
-      scanCt: sub.scanCt,
-      scanIv: sub.scanIv,
-    }));
+    const items: ScannedSubmissionItem[] = [];
+    for (const sub of submissions) {
+      let st = studentMap.get(sub.pseudonymHash);
+      if (!st) {
+        const hex = await ensure64CharHex(sub.pseudonymHash);
+        st = studentMap.get(hex);
+      }
+
+      let sName = st?.studentName;
+      let sNumber = st?.studentNumber;
+      let fCode = st?.fallbackCode;
+
+      const qrCandidate =
+        (st?.pseudonymId && st.pseudonymId.includes('_') ? st.pseudonymId : null) ||
+        (sub.pseudonymHash && sub.pseudonymHash.includes('_') ? sub.pseudonymHash : null) ||
+        (fCode && fCode.includes('_') ? fCode : null);
+
+      if (qrCandidate) {
+        const parsed = parseStudentQr(qrCandidate);
+        if (parsed) {
+          sName = sName || parsed.displayName;
+          sNumber = sNumber || parsed.studentNumber;
+          if (!fCode || fCode === "UNKNOWN" || fCode.length === 64) {
+            fCode = parsed.displayName;
+          }
+        }
+      }
+
+      if (!fCode || fCode === "UNKNOWN") {
+        fCode = sName || (sub.pseudonymHash.length > 16 ? sub.pseudonymHash.substring(0, 8) : sub.pseudonymHash);
+      }
+
+      items.push({
+        id: sub.id,
+        pseudonymHash: sub.pseudonymHash,
+        fallbackCode: fCode,
+        studentName: sName,
+        studentNumber: sNumber,
+        createdAt: sub.createdAt || new Date().toISOString(),
+        scanCt: sub.scanCt,
+        scanIv: sub.scanIv,
+      });
+    }
+
+    scannedSubmissions = items;
   }
 
   async function openPreview(item: ScannedSubmissionItem) {
@@ -152,7 +202,7 @@
 
       previewIsPdf = isPdf;
       const mimeType = isPdf ? "application/pdf" : "image/png";
-      const blob = new Blob([decryptedBytes], { type: mimeType });
+      const blob = new Blob([decryptedBytes as unknown as BlobPart], { type: mimeType });
       previewObjectUrl = URL.createObjectURL(blob);
     } catch (err) {
       console.error("Preview decryption failed:", err);
@@ -180,6 +230,26 @@
       await loadScannedSubmissions();
     } catch (err: any) {
       alert(`Failed to delete scan: ${err?.message || err}`);
+    }
+  }
+
+  async function handleDeleteAllScans() {
+    if (scannedSubmissions.length === 0) return;
+    if (
+      !confirm(
+        `Are you sure you want to delete ALL ${scannedSubmissions.length} ingested scan(s) for this exam? This action cannot be undone.`
+      )
+    ) {
+      return;
+    }
+    try {
+      for (const item of scannedSubmissions) {
+        await submissionRepository.delete(examId, item.id);
+      }
+      await refreshUnmatched();
+      await loadScannedSubmissions();
+    } catch (err: any) {
+      alert(`Failed to delete all scans: ${err?.message || err}`);
     }
   }
 
@@ -325,6 +395,8 @@
     interface StudentBooklet {
       pseudonymId: string;
       fallbackCode: string;
+      studentName?: string;
+      studentNumber?: string;
       isUnmatched: boolean;
       pageBuffers: Uint8Array[];
     }
@@ -372,13 +444,17 @@
 
       if (qrResult) {
         const pseudoId: string = qrResult.pseudonymId;
+        const parsedStudent = parseStudentQr(pseudoId) || (qrResult.rawText ? parseStudentQr(qrResult.rawText) : null);
         const fallbackCode =
+          (parsedStudent ? parsedStudent.displayName : null) ||
           qrResult.fallbackCode ||
           `F-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
         booklets.push({
           pseudonymId: pseudoId,
           fallbackCode,
+          studentName: parsedStudent?.displayName,
+          studentNumber: parsedStudent?.studentNumber,
           isUnmatched: false,
           pageBuffers: [pageItem.buffer],
         });
@@ -421,6 +497,8 @@
           pseudonymId: booklet.pseudonymId,
           examId,
           fallbackCode: booklet.fallbackCode,
+          studentName: booklet.studentName,
+          studentNumber: booklet.studentNumber,
           piiCt: new Uint8Array([0]),
           piiIv: new Uint8Array(12),
         },
@@ -480,12 +558,18 @@
   }
 
   async function updateFallbackCode(item: UnmatchedSubmission) {
-    if (!item.newCode.trim()) return;
+    const code = item.newCode.trim();
+    if (!code) return;
     const key = get(sessionStore).sessionKey;
     const rawSt = await db.students.get(item.studentId);
     if (rawSt) {
       const st = await decryptStudent(rawSt, key);
-      st.fallbackCode = item.newCode.trim();
+      st.fallbackCode = code;
+      const parsed = parseStudentQr(code);
+      if (parsed) {
+        st.studentName = parsed.displayName;
+        st.studentNumber = parsed.studentNumber;
+      }
       await saveStudentEncrypted(st, key);
       await refreshUnmatched();
       await loadScannedSubmissions();
@@ -566,23 +650,32 @@
   {/if}
 
   <div class="scans-overview-section">
-    <h3>Ingested Scans ({scannedSubmissions.length})</h3>
+    <div class="scans-overview-header">
+      <h3>Ingested Scans ({scannedSubmissions.length})</h3>
+      {#if scannedSubmissions.length > 0}
+        <button class="btn-delete-all" on:click={handleDeleteAllScans}>
+          Delete All Scans
+        </button>
+      {/if}
+    </div>
     {#if scannedSubmissions.length === 0}
       <p class="empty-msg">No scans ingested for this exam yet.</p>
     {:else}
       <div class="scans-table">
         <div class="table-header">
-          <span>Submission ID</span>
-          <span>QR Pseudonym ID</span>
+          <span>Student Name</span>
+          <span>Student ID</span>
           <span>Fallback Code</span>
           <span>Date Ingested</span>
           <span>Action</span>
         </div>
         {#each scannedSubmissions as item}
           <div class="table-row">
-            <span class="mono-id" title={item.id}>{item.id.substring(0, 8)}...</span>
-            <span class="mono-id" title={item.pseudonymHash}>
-              {item.pseudonymHash.length > 16 ? item.pseudonymHash.substring(0, 16) + "..." : item.pseudonymHash}
+            <span class="student-name" title={`Submission ID: ${item.id}`}>
+              {item.studentName || 'Unmatched Student'}
+            </span>
+            <span class="student-number" title={`Pseudonym: ${item.pseudonymHash}`}>
+              {item.studentNumber || '—'}
             </span>
             <span class="badge" class:unmatched={item.fallbackCode.startsWith('UNMATCHED-')}>
               {item.fallbackCode}
@@ -617,7 +710,7 @@
               <iframe src={previewObjectUrl} title="Scan PDF Preview" class="preview-pdf"></iframe>
             </object>
           {:else}
-            <img src={previewObjectUrl} alt="Decrypted Scan Preview" class="preview-img" />
+            <ZoomableImage src={previewObjectUrl} alt="Decrypted Scan Preview" />
           {/if}
         {/if}
       </div>
@@ -627,7 +720,7 @@
 
 <style>
   .scan-ingestion-page {
-    max-width: 850px;
+    max-width: 100%;
     margin: 2rem auto;
     padding: 1rem;
   }
@@ -771,9 +864,32 @@
     border: 1px solid #334155;
   }
 
-  .scans-overview-section h3 {
-    margin-top: 0;
+  .scans-overview-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+  }
+
+  .scans-overview-header h3 {
+    margin: 0;
     color: #38bdf8;
+  }
+
+  .btn-delete-all {
+    padding: 0.45rem 0.85rem;
+    background: #dc2626;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+
+  .btn-delete-all:hover {
+    background: #b91c1c;
   }
 
   .empty-msg {
@@ -789,7 +905,7 @@
 
   .table-header {
     display: grid;
-    grid-template-columns: 1fr 1.5fr 1fr 1.2fr 1fr;
+    grid-template-columns: 1.5fr 1fr 1.2fr 1.2fr 1fr;
     gap: 0.75rem;
     font-weight: 600;
     font-size: 0.8rem;
@@ -801,7 +917,7 @@
 
   .table-row {
     display: grid;
-    grid-template-columns: 1fr 1.5fr 1fr 1.2fr 1fr;
+    grid-template-columns: 1.5fr 1fr 1.2fr 1.2fr 1fr;
     gap: 0.75rem;
     align-items: center;
     background: #0f172a;
@@ -810,9 +926,18 @@
     font-size: 0.875rem;
   }
 
-  .mono-id {
+  .student-name {
+    font-weight: 600;
+    color: #f8fafc;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .student-number {
     font-family: monospace;
-    color: #cbd5e1;
+    color: #38bdf8;
+    font-weight: 600;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -895,7 +1020,7 @@
     border: 1px solid #334155;
     border-radius: 12px;
     width: 90%;
-    max-width: 800px;
+    max-width: 1100px;
     max-height: 90vh;
     display: flex;
     flex-direction: column;
