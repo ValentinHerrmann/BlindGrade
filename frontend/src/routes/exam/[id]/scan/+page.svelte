@@ -6,7 +6,8 @@
     type HardwareProfile,
   } from "$lib/hardware/detect";
   import { db } from "$lib/db/db";
-  import { encrypt } from "$lib/crypto/aesGcm";
+  import { encrypt, decrypt, uint8ArrayToBase64 } from "$lib/crypto/aesGcm";
+  import { ensure64CharHex } from "$lib/crypto/hmac";
   import { sessionStore } from "$lib/stores/session";
   import { storagePolicyStore } from "$lib/stores/storagePolicy";
   import {
@@ -16,7 +17,9 @@
     decryptStudent,
   } from "$lib/db/dbEncryption";
   import { api } from "$lib/api/client";
-  import { onMount } from "svelte";
+  import { submissionRepository } from "$lib/repositories/submissionRepository";
+  import { studentRepository } from "$lib/repositories/studentRepository";
+  import { onMount, onDestroy } from "svelte";
   import { get } from "svelte/store";
   import { WorkerPool } from "$lib/workers/pool";
   import { browser } from "$app/environment";
@@ -47,7 +50,23 @@
     newCode: string;
   }
 
+  interface ScannedSubmissionItem {
+    id: string;
+    pseudonymHash: string;
+    fallbackCode: string;
+    createdAt: string;
+    scanCt?: Uint8Array;
+    scanIv?: Uint8Array;
+  }
+
   let unmatchedList: UnmatchedSubmission[] = [];
+  let scannedSubmissions: ScannedSubmissionItem[] = [];
+  let previewModalOpen = false;
+  let previewItem: ScannedSubmissionItem | null = null;
+  let previewObjectUrl: string | null = null;
+  let previewIsPdf = false;
+  let previewLoading = false;
+  let previewError = "";
   let qrPool: WorkerPool<QrWorkerRequest, QrWorkerResponse> | null = null;
 
   onMount(() => {
@@ -66,28 +85,156 @@
         monitor,
       );
       refreshUnmatched();
+      loadScannedSubmissions();
     }
 
     return () => {
       qrPool?.terminate();
+      if (previewObjectUrl) {
+        URL.revokeObjectURL(previewObjectUrl);
+      }
     };
   });
 
+  async function loadScannedSubmissions() {
+    const key = get(sessionStore).sessionKey;
+    const submissions = await submissionRepository.getByExamId(examId, key);
+    const students = await studentRepository.getByExamId(examId, key);
+
+    const studentMap = new Map<string, string>();
+    for (const st of students) {
+      studentMap.set(st.pseudonymId, st.fallbackCode || st.pseudonymId);
+    }
+
+    scannedSubmissions = submissions.map((sub) => ({
+      id: sub.id,
+      pseudonymHash: sub.pseudonymHash,
+      fallbackCode: studentMap.get(sub.pseudonymHash) || "UNKNOWN",
+      createdAt: sub.createdAt || new Date().toISOString(),
+      scanCt: sub.scanCt,
+      scanIv: sub.scanIv,
+    }));
+  }
+
+  async function openPreview(item: ScannedSubmissionItem) {
+    closePreview();
+    previewItem = item;
+    previewModalOpen = true;
+    previewLoading = true;
+    previewError = "";
+
+    const key = get(sessionStore).sessionKey;
+    let scanCt = item.scanCt;
+    let scanIv = item.scanIv;
+
+    if (!scanCt || !scanIv) {
+      const fullSub = await submissionRepository.getById(examId, item.id, key);
+      if (fullSub) {
+        scanCt = fullSub.scanCt;
+        scanIv = fullSub.scanIv;
+      }
+    }
+
+    if (!scanCt || !scanIv || !key) {
+      previewLoading = false;
+      previewError = "Scan data or session encryption key missing.";
+      return;
+    }
+
+    try {
+      const decryptedBytes = await decrypt(key, scanCt, scanIv);
+      const isPdf =
+        decryptedBytes.length > 4 &&
+        decryptedBytes[0] === 0x25 && // %
+        decryptedBytes[1] === 0x50 && // P
+        decryptedBytes[2] === 0x44 && // D
+        decryptedBytes[3] === 0x46; // F
+
+      previewIsPdf = isPdf;
+      const mimeType = isPdf ? "application/pdf" : "image/png";
+      const blob = new Blob([decryptedBytes.buffer as ArrayBuffer], { type: mimeType });
+      previewObjectUrl = URL.createObjectURL(blob);
+    } catch (err) {
+      console.error("Preview decryption failed:", err);
+      previewError = "Failed to decrypt scan data.";
+    } finally {
+      previewLoading = false;
+    }
+  }
+
+  function closePreview() {
+    if (previewObjectUrl) {
+      URL.revokeObjectURL(previewObjectUrl);
+      previewObjectUrl = null;
+    }
+    previewModalOpen = false;
+    previewItem = null;
+    previewIsPdf = false;
+    previewError = "";
+  }
+
+  async function handleDeleteScan(item: ScannedSubmissionItem) {
+    if (!confirm("Are you sure you want to delete this scan submission?")) return;
+    try {
+      await submissionRepository.delete(examId, item.id);
+      await loadScannedSubmissions();
+    } catch (err: any) {
+      alert(`Failed to delete scan: ${err?.message || err}`);
+    }
+  }
+
+  async function combinePageBuffers(pageBuffers: Uint8Array[]): Promise<Uint8Array> {
+    if (pageBuffers.length === 1) return pageBuffers[0];
+    const images = await Promise.all(
+      pageBuffers.map((buf) => {
+        return new Promise<HTMLImageElement>((resolve, reject) => {
+          const blob = new Blob([buf.buffer as ArrayBuffer], { type: "image/png" });
+          const url = URL.createObjectURL(blob);
+          const img = new Image();
+          img.onload = () => {
+            URL.revokeObjectURL(url);
+            resolve(img);
+          };
+          img.onerror = (err) => {
+            URL.revokeObjectURL(url);
+            reject(err);
+          };
+          img.src = url;
+        });
+      })
+    );
+
+    const totalHeight = images.reduce((acc, img) => acc + img.height, 0);
+    const maxWidth = Math.max(...images.map((img) => img.width));
+    const canvas = document.createElement("canvas");
+    canvas.width = maxWidth;
+    canvas.height = totalHeight;
+    const ctx = canvas.getContext("2d")!;
+
+    let currentY = 0;
+    for (const img of images) {
+      ctx.drawImage(img, 0, currentY);
+      currentY += img.height;
+    }
+
+    const blob: Blob = await new Promise((res) =>
+      canvas.toBlob((b) => res(b!), "image/png")
+    );
+    return new Uint8Array(await blob.arrayBuffer());
+  }
+
   async function refreshUnmatched() {
     const key = get(sessionStore).sessionKey;
-    const rawStudents = await db.students.where("examId").equals(examId).toArray();
-    const students = await Promise.all(rawStudents.map(s => decryptStudent(s, key)));
+    const students = await studentRepository.getByExamId(examId, key);
     const unmatched = students.filter((s) =>
       s.fallbackCode && s.fallbackCode.startsWith("UNMATCHED-"),
     );
-    unmatchedList = unmatched.map((s) => {
-      return {
-        submissionId: s.pseudonymId,
-        studentId: s.pseudonymId,
-        currentFallback: s.fallbackCode || "",
-        newCode: "",
-      };
-    });
+    unmatchedList = unmatched.map((s) => ({
+      submissionId: s.pseudonymId,
+      studentId: s.pseudonymId,
+      currentFallback: s.fallbackCode || "",
+      newCode: "",
+    }));
   }
 
   async function loadImageData(
@@ -175,171 +322,161 @@
     progress = 0;
     const files = Array.from(input.files);
 
-    let activePseudonymId: string | null = null;
-    let activeSubmissionId: string | null = null;
+    interface StudentBooklet {
+      pseudonymId: string;
+      fallbackCode: string;
+      isUnmatched: boolean;
+      pageBuffers: Uint8Array[];
+    }
 
-    let totalPagesCount = 0;
+    const booklets: StudentBooklet[] = [];
     let processedPages = 0;
+    let totalPagesCount = 0;
 
+    const extractedPages: { fileName: string; pageIndex: number; imageData: ImageData; buffer: Uint8Array }[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       statusText = `Extracting file ${i + 1} of ${files.length}: ${file.name}`;
-
       const pages = await extractPagesFromFile(file);
-      totalPagesCount += pages.length;
-
       for (let pIdx = 0; pIdx < pages.length; pIdx++) {
-        processedPages++;
-        progress = Math.round((processedPages / totalPagesCount) * 100);
-        statusText = `Processing page ${processedPages}: ${file.name} (page ${pIdx + 1}/${pages.length})`;
+        extractedPages.push({
+          fileName: file.name,
+          pageIndex: pIdx + 1,
+          imageData: pages[pIdx].imageData,
+          buffer: pages[pIdx].buffer,
+        });
+      }
+    }
+    totalPagesCount = extractedPages.length;
 
-        const pageItem = pages[pIdx];
-        let qrResult: QrWorkerResponse | null = null;
+    for (let pIdx = 0; pIdx < extractedPages.length; pIdx++) {
+      processedPages++;
+      progress = Math.round((processedPages / Math.max(totalPagesCount, 1)) * 50);
+      const pageItem = extractedPages[pIdx];
+      statusText = `Scanning page ${processedPages} of ${totalPagesCount}: ${pageItem.fileName}`;
 
-        if (qrPool) {
-          try {
-            const res = await qrPool.dispatch({
-              type: "QR_DECODE",
-              imageData: pageItem.imageData,
-            });
-            if (res.type === "QR_RESULT") {
-              qrResult = res;
-            }
-          } catch {
-            // No QR on this page
+      let qrResult: QrWorkerResponse | null = null;
+      if (qrPool) {
+        try {
+          const res = await qrPool.dispatch({
+            type: "QR_DECODE",
+            imageData: pageItem.imageData,
+          });
+          if (res.type === "QR_RESULT") {
+            qrResult = res;
           }
+        } catch {
+          // No QR on this page
         }
+      }
 
-        // Encrypt page buffer
-        let scanCt: Uint8Array | undefined;
-        let scanIv: Uint8Array | undefined;
-        if ($sessionStore.sessionKey) {
-          const encRes = await encrypt(
-            $sessionStore.sessionKey,
-            pageItem.buffer,
-          );
-          scanCt = encRes.ciphertext;
-          scanIv = encRes.iv;
-        }
+      if (qrResult) {
+        const pseudoId: string = qrResult.pseudonymId;
+        const fallbackCode =
+          qrResult.fallbackCode ||
+          `F-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
-        if (qrResult) {
-          // New student booklet detected
-          const pseudoId: string = qrResult.pseudonymId;
-          activePseudonymId = pseudoId;
-          const fallbackCode =
-            qrResult.fallbackCode ||
-            `F-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
-
-          const key = get(sessionStore).sessionKey;
-          await saveStudentEncrypted({
-            pseudonymId: pseudoId,
-            examId,
-            fallbackCode,
-            piiCt: new Uint8Array([0]),
-            piiIv: new Uint8Array(12),
-          }, key);
-
-          const subId: string = crypto.randomUUID();
-          activeSubmissionId = subId;
-          await saveSubmissionEncrypted({
-            id: subId,
-            examId,
-            pseudonymHash: pseudoId,
-            scanCt,
-            scanIv: scanIv || new Uint8Array(12),
-            createdAt: new Date().toISOString(),
-          }, key);
-          scannedCount++;
-
-          if ($storagePolicyStore.storageMode === "all-server") {
-            try {
-              const emptyCtB64 = btoa(String.fromCharCode(0));
-              const emptyIvB64 = btoa(
-                String.fromCharCode(...new Uint8Array(12)),
-              );
-              const emptySaltB64 = btoa(
-                String.fromCharCode(...new Uint8Array(16)),
-              );
-              await api.post(`/exams/${examId}/students`, {
-                pseudonym_hmac: pseudoId,
-                pii_ciphertext_b64: emptyCtB64,
-                iv_b64: emptyIvB64,
-                encryption_salt_b64: emptySaltB64,
-              });
-              await api.post(`/exams/${examId}/submissions`, {
-                id: subId,
-                pseudonym_hmac: pseudoId,
-              });
-            } catch (syncErr) {
-              console.warn(
-                "Failed to sync student/submission to server:",
-                syncErr,
-              );
-            }
-          }
+        booklets.push({
+          pseudonymId: pseudoId,
+          fallbackCode,
+          isUnmatched: false,
+          pageBuffers: [pageItem.buffer],
+        });
+      } else {
+        if (booklets.length > 0) {
+          booklets[booklets.length - 1].pageBuffers.push(pageItem.buffer);
         } else {
-          // Additional page in current booklet or orphaned initial page
-          if (!activeSubmissionId || !activePseudonymId) {
-            const pseudoId: string = crypto.randomUUID();
-            const subId: string = crypto.randomUUID();
-            activePseudonymId = pseudoId;
-            activeSubmissionId = subId;
-
-            const key = get(sessionStore).sessionKey;
-            await saveStudentEncrypted({
-              pseudonymId: pseudoId,
-              examId,
-              fallbackCode: `UNMATCHED-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
-              piiCt: new Uint8Array([0]),
-              piiIv: new Uint8Array(12),
-            }, key);
-
-            await saveSubmissionEncrypted({
-              id: subId,
-              examId,
-              pseudonymHash: pseudoId,
-              scanCt,
-              scanIv: scanIv || new Uint8Array(12),
-              createdAt: new Date().toISOString(),
-            }, key);
-            scannedCount++;
-
-            if ($storagePolicyStore.storageMode === "all-server") {
-              try {
-                const emptyCtB64 = btoa(String.fromCharCode(0));
-                const emptyIvB64 = btoa(
-                  String.fromCharCode(...new Uint8Array(12)),
-                );
-                const emptySaltB64 = btoa(
-                  String.fromCharCode(...new Uint8Array(16)),
-                );
-                await api.post(`/exams/${examId}/students`, {
-                  pseudonym_hmac: pseudoId,
-                  pii_ciphertext_b64: emptyCtB64,
-                  iv_b64: emptyIvB64,
-                  encryption_salt_b64: emptySaltB64,
-                });
-                await api.post(`/exams/${examId}/submissions`, {
-                  id: subId,
-                  pseudonym_hmac: pseudoId,
-                });
-              } catch (syncErr) {
-                console.warn(
-                  "Failed to sync unmatched student/submission to server:",
-                  syncErr,
-                );
-              }
-            }
-          }
+          const pseudoId: string = crypto.randomUUID();
+          booklets.push({
+            pseudonymId: pseudoId,
+            fallbackCode: `UNMATCHED-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+            isUnmatched: true,
+            pageBuffers: [pageItem.buffer],
+          });
         }
+      }
 
-        monitor?.checkMemoryHealth();
+      monitor?.checkMemoryHealth();
+    }
+
+    let newlyIngestedCount = 0;
+    for (let bIdx = 0; bIdx < booklets.length; bIdx++) {
+      const booklet = booklets[bIdx];
+      statusText = `Saving student booklet ${bIdx + 1} of ${booklets.length} (${booklet.pageBuffers.length} page(s))...`;
+      progress = 50 + Math.round(((bIdx + 1) / Math.max(booklets.length, 1)) * 50);
+
+      const scanBuffer = await combinePageBuffers(booklet.pageBuffers);
+
+      let scanCt: Uint8Array | undefined;
+      let scanIv: Uint8Array | undefined;
+      if ($sessionStore.sessionKey) {
+        const encRes = await encrypt($sessionStore.sessionKey, scanBuffer);
+        scanCt = encRes.ciphertext;
+        scanIv = encRes.iv;
+      }
+
+      const key = get(sessionStore).sessionKey;
+      await saveStudentEncrypted(
+        {
+          pseudonymId: booklet.pseudonymId,
+          examId,
+          fallbackCode: booklet.fallbackCode,
+          piiCt: new Uint8Array([0]),
+          piiIv: new Uint8Array(12),
+        },
+        key,
+      );
+
+      const subId: string = crypto.randomUUID();
+      await saveSubmissionEncrypted(
+        {
+          id: subId,
+          examId,
+          pseudonymHash: booklet.pseudonymId,
+          scanCt,
+          scanIv: scanIv || new Uint8Array(12),
+          createdAt: new Date().toISOString(),
+        },
+        key,
+      );
+
+      newlyIngestedCount++;
+      scannedCount++;
+
+      if ($storagePolicyStore.storageMode === "all-server") {
+        try {
+          const emptyCtB64 = uint8ArrayToBase64(new Uint8Array([0]));
+          const emptyIvB64 = uint8ArrayToBase64(new Uint8Array(12));
+          const emptySaltB64 = uint8ArrayToBase64(new Uint8Array(16));
+          const pseudoHmac = await ensure64CharHex(booklet.pseudonymId);
+          await api.post(`/exams/${examId}/students`, {
+            pseudonym_hmac: pseudoHmac,
+            pii_ciphertext_b64: emptyCtB64,
+            iv_b64: emptyIvB64,
+            encryption_salt_b64: emptySaltB64,
+          });
+          const subPayload: any = {
+            id: subId,
+            pseudonym_hmac: pseudoHmac,
+          };
+          if (scanCt && scanIv) {
+            subPayload.scan_ciphertext_b64 = uint8ArrayToBase64(scanCt);
+            subPayload.scan_iv_b64 = uint8ArrayToBase64(scanIv);
+          }
+          await api.post(`/exams/${examId}/submissions`, subPayload);
+        } catch (syncErr) {
+          console.warn(
+            "Failed to sync student/submission to server:",
+            syncErr,
+          );
+        }
       }
     }
 
     await refreshUnmatched();
+    await loadScannedSubmissions();
     isProcessing = false;
-    statusText = `Complete! Ingested ${files.length} file(s) (${processedPages} page(s)) into ${scannedCount} submission booklet(s).`;
+    statusText = `Complete! Ingested ${files.length} file(s) (${processedPages} page(s)) into ${newlyIngestedCount} student submission booklet(s).`;
   }
 
   async function updateFallbackCode(item: UnmatchedSubmission) {
@@ -351,6 +488,7 @@
       st.fallbackCode = item.newCode.trim();
       await saveStudentEncrypted(st, key);
       await refreshUnmatched();
+      await loadScannedSubmissions();
       alert(`Updated fallback code to "${st.fallbackCode}"`);
     }
   }
@@ -426,7 +564,66 @@
       </div>
     </div>
   {/if}
+
+  <div class="scans-overview-section">
+    <h3>Ingested Scans ({scannedSubmissions.length})</h3>
+    {#if scannedSubmissions.length === 0}
+      <p class="empty-msg">No scans ingested for this exam yet.</p>
+    {:else}
+      <div class="scans-table">
+        <div class="table-header">
+          <span>Submission ID</span>
+          <span>QR Pseudonym ID</span>
+          <span>Fallback Code</span>
+          <span>Date Ingested</span>
+          <span>Action</span>
+        </div>
+        {#each scannedSubmissions as item}
+          <div class="table-row">
+            <span class="mono-id" title={item.id}>{item.id.substring(0, 8)}...</span>
+            <span class="mono-id" title={item.pseudonymHash}>
+              {item.pseudonymHash.length > 16 ? item.pseudonymHash.substring(0, 16) + "..." : item.pseudonymHash}
+            </span>
+            <span class="badge" class:unmatched={item.fallbackCode.startsWith('UNMATCHED-')}>
+              {item.fallbackCode}
+            </span>
+            <span class="time">{new Date(item.createdAt).toLocaleString()}</span>
+            <div class="action-buttons">
+              <button class="btn-preview" on:click={() => openPreview(item)}>Preview Scan</button>
+              <button class="btn-delete" on:click={() => handleDeleteScan(item)}>Delete</button>
+            </div>
+          </div>
+        {/each}
+      </div>
+    {/if}
+  </div>
 </div>
+
+{#if previewModalOpen}
+  <div class="modal-backdrop" on:click={closePreview} role="presentation">
+    <div class="modal-card" on:click|stopPropagation role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h3>Scan Preview — {previewItem?.fallbackCode || previewItem?.id}</h3>
+        <button class="close-btn" on:click={closePreview}>&times;</button>
+      </div>
+      <div class="modal-body">
+        {#if previewLoading}
+          <div class="preview-status">Decrypting scan...</div>
+        {:else if previewError}
+          <div class="preview-error">{previewError}</div>
+        {:else if previewObjectUrl}
+          {#if previewIsPdf}
+            <object data={previewObjectUrl} type="application/pdf" class="preview-pdf">
+              <iframe src={previewObjectUrl} title="Scan PDF Preview" class="preview-pdf"></iframe>
+            </object>
+          {:else}
+            <img src={previewObjectUrl} alt="Decrypted Scan Preview" class="preview-img" />
+          {/if}
+        {/if}
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .scan-ingestion-page {
@@ -564,5 +761,207 @@
     border-radius: 4px;
     cursor: pointer;
     font-weight: 600;
+  }
+
+  .scans-overview-section {
+    margin-top: 2.5rem;
+    background: #1e293b;
+    padding: 1.5rem;
+    border-radius: 10px;
+    border: 1px solid #334155;
+  }
+
+  .scans-overview-section h3 {
+    margin-top: 0;
+    color: #38bdf8;
+  }
+
+  .empty-msg {
+    color: #94a3b8;
+    font-size: 0.875rem;
+  }
+
+  .scans-table {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .table-header {
+    display: grid;
+    grid-template-columns: 1fr 1.5fr 1fr 1.2fr 1fr;
+    gap: 0.75rem;
+    font-weight: 600;
+    font-size: 0.8rem;
+    color: #94a3b8;
+    text-transform: uppercase;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid #334155;
+  }
+
+  .table-row {
+    display: grid;
+    grid-template-columns: 1fr 1.5fr 1fr 1.2fr 1fr;
+    gap: 0.75rem;
+    align-items: center;
+    background: #0f172a;
+    padding: 0.75rem;
+    border-radius: 6px;
+    font-size: 0.875rem;
+  }
+
+  .mono-id {
+    font-family: monospace;
+    color: #cbd5e1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .badge {
+    display: inline-block;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    background: #0284c7;
+    color: white;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  .badge.unmatched {
+    background: #eab308;
+    color: black;
+  }
+
+  .time {
+    color: #94a3b8;
+    font-size: 0.8rem;
+  }
+
+  .action-buttons {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  .btn-preview {
+    padding: 0.4rem 0.8rem;
+    background: #0284c7;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.8rem;
+    transition: background 0.2s ease;
+  }
+
+  .btn-preview:hover {
+    background: #0369a1;
+  }
+
+  .btn-delete {
+    padding: 0.4rem 0.8rem;
+    background: #dc2626;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.8rem;
+    transition: background 0.2s ease;
+  }
+
+  .btn-delete:hover {
+    background: #b91c1c;
+  }
+
+  .modal-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(15, 23, 42, 0.85);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .modal-card {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 12px;
+    width: 90%;
+    max-width: 800px;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+    overflow: hidden;
+  }
+
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    background: #0f172a;
+    border-bottom: 1px solid #334155;
+  }
+
+  .modal-header h3 {
+    margin: 0;
+    color: #38bdf8;
+    font-size: 1.1rem;
+  }
+
+  .close-btn {
+    background: none;
+    border: none;
+    color: #94a3b8;
+    font-size: 1.5rem;
+    cursor: pointer;
+    line-height: 1;
+  }
+
+  .close-btn:hover {
+    color: white;
+  }
+
+  .modal-body {
+    padding: 1.5rem;
+    overflow-y: auto;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 300px;
+  }
+
+  .preview-status {
+    color: #38bdf8;
+    font-weight: 500;
+  }
+
+  .preview-error {
+    color: #f87171;
+    font-weight: 500;
+  }
+
+  .preview-img {
+    max-width: 100%;
+    max-height: 70vh;
+    object-fit: contain;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+  }
+
+  .preview-pdf {
+    width: 100%;
+    height: 75vh;
+    border: none;
+    border-radius: 8px;
   }
 </style>

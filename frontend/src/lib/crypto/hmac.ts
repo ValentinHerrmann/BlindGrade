@@ -52,3 +52,17 @@ export async function hmacPseudonymId(
   const key = await importHmacKey(examSecretBytes);
   return hmacSha256Hex(rawPseudonymId, key);
 }
+
+/**
+ * Ensures string is a 64-character hex string suitable for pseudonym_hmac backend fields.
+ * If input is already 64 characters, returns input. Otherwise computes SHA-256 digest hex.
+ */
+export async function ensure64CharHex(idStr: string): Promise<string> {
+  if (idStr && idStr.length === 64) {
+    return idStr;
+  }
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(idStr || ''));
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}

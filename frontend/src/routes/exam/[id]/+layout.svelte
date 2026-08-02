@@ -4,6 +4,7 @@
   import { get } from "svelte/store";
   import { sessionStore } from "$lib/stores/session";
   import { loadExamEncrypted } from "$lib/db/dbEncryption";
+  import { submissionRepository } from "$lib/repositories/submissionRepository";
   import { db } from "$lib/db/db";
   import type { ExamRecord } from "$lib/db/schema";
 
@@ -21,8 +22,8 @@
     const key = get(sessionStore).sessionKey;
     try {
       exam = (await loadExamEncrypted(id, key)) || null;
-      const count = await db.submissions.where("examId").equals(id).count();
-      submissionCount = count;
+      const subs = await submissionRepository.getByExamId(id, key);
+      submissionCount = subs.length;
     } catch (e) {
       console.error(e);
     }

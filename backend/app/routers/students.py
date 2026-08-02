@@ -24,10 +24,34 @@ async def upload_student_identity(
     exam: Exam = Depends(get_exam_for_teacher),
     db: AsyncSession = Depends(get_db),
 ) -> StudentIdentityResponse:
-    """Upload encrypted student identity ciphertext."""
+    """Upload encrypted student identity ciphertext. Handles upsert for duplicate pseudonym_hmac."""
     pii_bytes = base64.b64decode(body.pii_ciphertext_b64)
     iv_bytes = base64.b64decode(body.iv_b64)
     salt_bytes = base64.b64decode(body.encryption_salt_b64)
+
+    # Check if student identity already exists
+    result = await db.execute(
+        select(StudentIdentity).where(StudentIdentity.pseudonym_hmac == body.pseudonym_hmac)
+    )
+    existing = result.scalar_one_or_none()
+
+    if existing:
+        if existing.exam_id != exam.id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Student identity belongs to another exam.",
+            )
+        existing.pii_ciphertext = pii_bytes
+        existing.iv = iv_bytes
+        existing.encryption_salt = salt_bytes
+        await db.flush()
+        return StudentIdentityResponse(
+            pseudonym_hmac=existing.pseudonym_hmac,
+            exam_id=existing.exam_id,
+            pii_ciphertext_b64=body.pii_ciphertext_b64,
+            iv_b64=body.iv_b64,
+            encryption_salt_b64=body.encryption_salt_b64,
+        )
 
     identity = StudentIdentity(
         pseudonym_hmac=body.pseudonym_hmac,

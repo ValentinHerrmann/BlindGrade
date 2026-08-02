@@ -4,6 +4,8 @@
   import { db } from '$lib/db/db';
   import type { ExamRecord, SubmissionRecord, StudentRecord } from '$lib/db/schema';
   import { loadExamEncrypted, decryptSubmission, decryptStudent, encryptAuditEntry } from '$lib/db/dbEncryption';
+  import { submissionRepository } from '$lib/repositories/submissionRepository';
+  import { studentRepository } from '$lib/repositories/studentRepository';
   import { sessionStore } from '$lib/stores/session';
   import { calculateSummaryStats, type SummaryStats } from '$lib/analytics/stats';
   import { checkKAnonymity } from '$lib/analytics/kanonymity';
@@ -22,10 +24,8 @@
     if (!examId) return;
     const key = get(sessionStore).sessionKey;
     exam = (await loadExamEncrypted(examId, key)) || null;
-    const rawSubs = await db.submissions.where('examId').equals(examId).toArray();
-    submissions = await Promise.all(rawSubs.map(s => decryptSubmission(s, key)));
-    const rawSts = await db.students.where('examId').equals(examId).toArray();
-    students = await Promise.all(rawSts.map(st => decryptStudent(st, key)));
+    submissions = await submissionRepository.getByExamId(examId, key);
+    students = await studentRepository.getByExamId(examId, key);
 
     const scores = submissions
       .map((s) => s.totalScore)

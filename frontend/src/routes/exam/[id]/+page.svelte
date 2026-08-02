@@ -23,6 +23,9 @@
   import { compileLatex } from "$lib/latex/compiler";
   import { formatExerciseLatex } from "$lib/latex/scoreParser";
   import { api } from "$lib/api/client";
+  import { submissionRepository } from "$lib/repositories/submissionRepository";
+  import { uint8ArrayToBase64 } from "$lib/crypto/aesGcm";
+  import { ensure64CharHex } from "$lib/crypto/hmac";
   import { sessionStore, isAuthenticated } from "$lib/stores/session";
   import { storagePolicyStore } from "$lib/stores/storagePolicy";
   import { get } from "svelte/store";
@@ -118,8 +121,7 @@
         exam = (await loadExamEncrypted(id, key)) || null;
         exercises = await loadExamExercisesEncrypted(id, key);
       }
-      const rawSubs = await db.submissions.where("examId").equals(id).toArray();
-      submissions = await Promise.all(rawSubs.map(s => decryptSubmission(s, key)));
+      submissions = await submissionRepository.getByExamId(id, key);
     } catch (err) {
       console.error("Failed to load exam from DB:", err);
     }
@@ -177,15 +179,12 @@
         .toArray();
       for (const st of localStudents) {
         try {
-          const emptyCtB64 = btoa(
-            String.fromCharCode(...(st.piiCt || new Uint8Array([0]))),
-          );
-          const emptyIvB64 = btoa(
-            String.fromCharCode(...(st.piiIv || new Uint8Array(12))),
-          );
-          const emptySaltB64 = btoa(String.fromCharCode(...new Uint8Array(16)));
+          const emptyCtB64 = uint8ArrayToBase64(st.piiCt || new Uint8Array([0]));
+          const emptyIvB64 = uint8ArrayToBase64(st.piiIv || new Uint8Array(12));
+          const emptySaltB64 = uint8ArrayToBase64(new Uint8Array(16));
+          const pseudonymHmac = await ensure64CharHex(st.pseudonymId);
           await api.post(`/exams/${exam.id}/students`, {
-            pseudonym_hmac: st.pseudonymId,
+            pseudonym_hmac: pseudonymHmac,
             pii_ciphertext_b64: emptyCtB64,
             iv_b64: emptyIvB64,
             encryption_salt_b64: emptySaltB64,
@@ -200,21 +199,22 @@
         .toArray();
       for (const sub of localSubmissions) {
         try {
+          const pseudonymHmac = await ensure64CharHex(sub.pseudonymHash);
           await api.post(`/exams/${exam.id}/submissions`, {
             id: sub.id,
-            pseudonym_hmac: sub.pseudonymHash,
+            pseudonym_hmac: pseudonymHmac,
             total_score: sub.totalScore || 0,
             scan_ciphertext_b64: sub.scanCt
-              ? btoa(String.fromCharCode(...sub.scanCt))
+              ? uint8ArrayToBase64(sub.scanCt)
               : undefined,
             scan_iv_b64: sub.scanIv
-              ? btoa(String.fromCharCode(...sub.scanIv))
+              ? uint8ArrayToBase64(sub.scanIv)
               : undefined,
             annotation_ciphertext_b64: sub.annotationCt
-              ? btoa(String.fromCharCode(...sub.annotationCt))
+              ? uint8ArrayToBase64(sub.annotationCt)
               : undefined,
             annotation_iv_b64: sub.annotationIv
-              ? btoa(String.fromCharCode(...sub.annotationIv))
+              ? uint8ArrayToBase64(sub.annotationIv)
               : undefined,
           });
         } catch {}

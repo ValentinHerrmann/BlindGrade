@@ -5,6 +5,8 @@ import { storagePolicyStore } from '$lib/stores/storagePolicy';
 import { encryptStudent, decryptStudent } from '$lib/db/dbEncryption';
 import { enqueueRequest } from '$lib/services/offlineQueue';
 import type { StudentRecord } from '$lib/db/schema';
+import { uint8ArrayToBase64 } from '$lib/crypto/aesGcm';
+import { ensure64CharHex } from '$lib/crypto/hmac';
 
 export const studentRepository = {
   async getAll(key: CryptoKey | null): Promise<StudentRecord[]> {
@@ -55,11 +57,12 @@ export const studentRepository = {
       const encrypted = await encryptStudent(student, key);
       await db.students.put(encrypted);
     } else {
+      const pseudonymHmac = await ensure64CharHex(student.pseudonymId);
       const payload = {
-        pseudonym_hmac: student.pseudonymId,
-        pii_ciphertext_b64: btoa(String.fromCharCode(...student.piiCt)),
-        iv_b64: btoa(String.fromCharCode(...student.piiIv)),
-        encryption_salt_b64: btoa(String.fromCharCode(...new Uint8Array(16))),
+        pseudonym_hmac: pseudonymHmac,
+        pii_ciphertext_b64: uint8ArrayToBase64(student.piiCt),
+        iv_b64: uint8ArrayToBase64(student.piiIv),
+        encryption_salt_b64: uint8ArrayToBase64(new Uint8Array(16)),
       };
       try {
         await api.post(`/exams/${student.examId}/students`, payload);

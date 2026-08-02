@@ -8,6 +8,7 @@
 import { db } from '$lib/db/db';
 import { sessionStore } from '$lib/stores/session';
 import { encryptAuditEntry } from '$lib/db/dbEncryption';
+import { submissionRepository } from '$lib/repositories/submissionRepository';
 import { storagePolicyStore } from '$lib/stores/storagePolicy';
 import { api } from '$lib/api/client';
 import { get } from 'svelte/store';
@@ -50,7 +51,7 @@ export async function eraseStudent(pseudonymId: string, examId: string): Promise
       throw new Error(`Student record not found for ID: ${pseudonymId}`);
     }
 
-    const allSubs = await db.submissions.where('examId').equals(examId).toArray();
+    const allSubs = await submissionRepository.getByExamId(examId, key);
     // Filter matching submissions
     const matchingSubs = allSubs.filter((s) => s.pseudonymHash);
     submissionsCount = matchingSubs.length;

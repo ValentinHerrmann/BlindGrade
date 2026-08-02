@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import uuid
 from datetime import date, timedelta
 
 import pytest
@@ -125,9 +126,61 @@ async def test_student_and_submission_upload(client: AsyncClient, db: AsyncSessi
     assert get_sub.status_code == 200
     assert get_sub.json()["total_score"] == 85.5
 
+    # Delete Submission
+    del_sub = await client.delete(f"/api/v1/exams/{exam_id}/submissions/{sub_id}")
+    assert del_sub.status_code == 204
+
+    # Deleted submission is now not found
+    get_del_sub = await client.get(f"/api/v1/exams/{exam_id}/submissions/{sub_id}")
+    assert get_del_sub.status_code == 404
+
     # GDPR Student Erasure
     erase_resp = await client.delete(f"/api/v1/exams/{exam_id}/students/{pseudonym_hmac}")
     assert erase_resp.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_student_and_submission_upsert(client: AsyncClient, db: AsyncSession) -> None:
+    await _create_teacher_and_login(client, db, "teacher2@example.com")
+    e_resp = await client.post(
+        "/api/v1/exams",
+        json={"title": "Upsert Exam", "retention_until": "2027-12-31"},
+    )
+    exam_id = e_resp.json()["id"]
+
+    pseudonym_hmac = "c" * 64
+    payload_st = {
+        "pseudonym_hmac": pseudonym_hmac,
+        "pii_ciphertext_b64": base64.b64encode(b"PII1").decode(),
+        "iv_b64": base64.b64encode(b"123456789012").decode(),
+        "encryption_salt_b64": base64.b64encode(b"1234567890123456").decode(),
+    }
+
+    # Upload student identity 1st time
+    st_resp1 = await client.post(f"/api/v1/exams/{exam_id}/students", json=payload_st)
+    assert st_resp1.status_code == 201
+
+    # Upload same student identity 2nd time (upsert)
+    st_resp2 = await client.post(f"/api/v1/exams/{exam_id}/students", json=payload_st)
+    assert st_resp2.status_code == 201
+
+    # Upload submission with existing ID (upsert)
+    sub_id = str(uuid.uuid4())
+    payload_sub = {
+        "id": sub_id,
+        "pseudonym_hmac": pseudonym_hmac,
+        "scan_ciphertext_b64": base64.b64encode(b"Scan1").decode(),
+        "scan_iv_b64": base64.b64encode(b"123456789012").decode(),
+        "total_score": 92.0,
+    }
+    sub_resp1 = await client.post(f"/api/v1/exams/{exam_id}/submissions", json=payload_sub)
+    assert sub_resp1.status_code == 201
+
+    # Upsert submission
+    payload_sub["total_score"] = 95.0
+    sub_resp2 = await client.post(f"/api/v1/exams/{exam_id}/submissions", json=payload_sub)
+    assert sub_resp2.status_code == 201
+    assert sub_resp2.json()["total_score"] == 95.0
 
 
 @pytest.mark.asyncio

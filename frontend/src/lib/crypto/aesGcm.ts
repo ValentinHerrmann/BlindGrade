@@ -53,9 +53,20 @@ export async function decrypt(
   return new Uint8Array(plaintextBuffer);
 }
 
+/** Safe Uint8Array to Base64 string converter (chunks array to prevent call stack size exceeded). */
+export function uint8ArrayToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const CHUNK_SIZE = 0x8000; // 32KB
+  for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
+    const chunk = bytes.subarray(i, i + CHUNK_SIZE);
+    binary += String.fromCharCode.apply(null, chunk as unknown as number[]);
+  }
+  return btoa(binary);
+}
+
 /** Encode Uint8Array to base64url string (for JSON serialization). */
 export function toBase64url(bytes: Uint8Array): string {
-  return btoa(String.fromCharCode(...bytes))
+  return uint8ArrayToBase64(bytes)
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/, '');

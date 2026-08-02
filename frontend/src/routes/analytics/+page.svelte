@@ -5,6 +5,7 @@
   import { db } from '$lib/db/db';
   import type { ExamRecord } from '$lib/db/schema';
   import { loadExamsEncrypted } from '$lib/db/dbEncryption';
+  import { submissionRepository } from '$lib/repositories/submissionRepository';
 
   interface ExercisePerformance {
     id: string;
@@ -65,7 +66,7 @@
 
     const allExercises = await db.exercises.toArray();
     const allExamExercises = await db.examExercises.toArray();
-    const allSubmissions = await db.submissions.toArray();
+    const allSubmissions = await submissionRepository.getAll(key);
     const allScores = await db.exerciseScores.toArray();
 
     totalSubmissionsCount = allSubmissions.length;

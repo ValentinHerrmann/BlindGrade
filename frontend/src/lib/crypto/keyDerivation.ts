@@ -52,6 +52,30 @@ export function generateSalt(): Uint8Array {
 }
 
 /**
+ * Derive a deterministic 16-byte salt from user email.
+ */
+export async function getUserSalt(email: string): Promise<Uint8Array> {
+  const normalized = email.trim().toLowerCase();
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode('blindgrade-user-salt:' + normalized)
+  );
+  return new Uint8Array(digest).slice(0, 16);
+}
+
+/**
+ * Derive a deterministic 12-byte session nonce from user email.
+ */
+export async function getUserSessionNonce(email: string): Promise<Uint8Array> {
+  const normalized = email.trim().toLowerCase();
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode('blindgrade-user-nonce:' + normalized)
+  );
+  return new Uint8Array(digest).slice(0, 12);
+}
+
+/**
  * Derive a master AES-256-GCM CryptoKey from password + salt via Argon2id.
  *
  * Deterministic: same password + same salt → same key material.

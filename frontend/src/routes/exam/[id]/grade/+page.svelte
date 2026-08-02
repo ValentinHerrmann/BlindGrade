@@ -12,6 +12,7 @@
     decryptSubmission,
   } from "$lib/db/dbEncryption";
   import { api } from "$lib/api/client";
+  import { submissionRepository } from "$lib/repositories/submissionRepository";
   import { sessionStore } from "$lib/stores/session";
   import { storagePolicyStore } from "$lib/stores/storagePolicy";
   import { decrypt, encrypt } from "$lib/crypto/aesGcm";
@@ -57,8 +58,7 @@
     if (!examId) return;
     const key = get(sessionStore).sessionKey;
     exercises = await loadExamExercisesEncrypted(examId, key);
-    const rawSubs = await db.submissions.where("examId").equals(examId).toArray();
-    submissions = await Promise.all(rawSubs.map(s => decryptSubmission(s, key)));
+    submissions = await submissionRepository.getByExamId(examId, key);
     if (submissions.length > 0) {
       initExerciseScores(submissions[0]);
     }
@@ -96,6 +96,15 @@
     ctx.clearRect(0, 0, scanCanvas.width, scanCanvas.height);
     overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
     currentStrokes = [];
+
+    const key = get(sessionStore).sessionKey;
+    if ((!sub.scanCt || !sub.scanIv) && key) {
+      const fullSub = await submissionRepository.getById(examId, sub.id, key);
+      if (fullSub && fullSub.scanCt && fullSub.scanIv) {
+        sub = fullSub;
+        submissions[currentIndex] = fullSub;
+      }
+    }
 
     if (!sub.scanCt || !sub.scanIv || !$sessionStore.sessionKey) {
       // Render fallback blank canvas

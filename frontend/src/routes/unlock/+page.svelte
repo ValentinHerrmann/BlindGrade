@@ -1,6 +1,6 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
-  import { deriveKey, generateSalt } from "$lib/crypto/keyDerivation";
+  import { deriveKey, generateSalt, getUserSalt, getUserSessionNonce } from "$lib/crypto/keyDerivation";
   import {
     deriveSessionKey,
     generateSessionNonce,
@@ -57,10 +57,10 @@
         storagePolicyStore.updateSetting("storageMode", "all-server");
       }
 
-      // Derive local session keys for client-side encryption
-      const salt = generateSalt();
+      // Derive local session keys deterministically from user email & password
+      const salt = await getUserSalt(normalizedEmail);
       const masterKey = await deriveKey(password, salt);
-      const sessionNonce = generateSessionNonce();
+      const sessionNonce = await getUserSessionNonce(normalizedEmail);
       const sessionKey = await deriveSessionKey(masterKey, sessionNonce);
 
       sessionStore.unlock({

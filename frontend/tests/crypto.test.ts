@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { encrypt, decrypt, toBase64url, fromBase64url } from '../src/lib/crypto/aesGcm';
-import { hmacPseudonymId, importHmacKey, hmacSha256Hex } from '../src/lib/crypto/hmac';
+import { encrypt, decrypt, toBase64url, fromBase64url, uint8ArrayToBase64 } from '../src/lib/crypto/aesGcm';
+import { hmacPseudonymId, importHmacKey, hmacSha256Hex, ensure64CharHex } from '../src/lib/crypto/hmac';
 import { deriveSessionKey, generateSessionNonce } from '../src/lib/crypto/sessionKey';
+import { getUserSalt, getUserSessionNonce } from '../src/lib/crypto/keyDerivation';
 import {
   encryptExam,
   decryptExam,
@@ -108,6 +109,30 @@ describe('HMAC-SHA-256 Pseudonym Hashing', () => {
   });
 });
 
+describe('Deterministic Key Derivation', () => {
+  it('generates identical salt and nonce for identical email across sessions', async () => {
+    const salt1 = await getUserSalt('teacher@example.com');
+    const salt2 = await getUserSalt('TEACHER@example.com ');
+    const nonce1 = await getUserSessionNonce('teacher@example.com');
+    const nonce2 = await getUserSessionNonce('TEACHER@example.com ');
+
+    expect(salt1.length).toBe(16);
+    expect(nonce1.length).toBe(12);
+    expect(salt1).toEqual(salt2);
+    expect(nonce1).toEqual(nonce2);
+  });
+
+  it('generates different salt and nonce for different emails', async () => {
+    const saltA = await getUserSalt('userA@example.com');
+    const saltB = await getUserSalt('userB@example.com');
+    const nonceA = await getUserSessionNonce('userA@example.com');
+    const nonceB = await getUserSessionNonce('userB@example.com');
+
+    expect(saltA).not.toEqual(saltB);
+    expect(nonceA).not.toEqual(nonceB);
+  });
+});
+
 describe('HKDF Session Key Derivation', () => {
   it('derives session key from master key and nonce', async () => {
     const masterRaw = new Uint8Array(32).fill(99);
@@ -189,5 +214,27 @@ describe('IndexedDB Record Encryption-at-Rest', () => {
     const locked = await decryptExercise(encrypted, null);
     expect(locked.name).toBeUndefined();
     expect(locked.latexBody).toBeUndefined();
+  });
+});
+
+describe('Large Binary & Pseudonym Validation Helpers', () => {
+  it('converts large Uint8Array (1MB) to Base64 without call stack exceeded error', () => {
+    const largeBuffer = new Uint8Array(1024 * 1024); // 1MB
+    for (let i = 0; i < largeBuffer.length; i++) {
+      largeBuffer[i] = i % 256;
+    }
+    const b64 = uint8ArrayToBase64(largeBuffer);
+    expect(typeof b64).toBe('string');
+    expect(b64.length).toBeGreaterThan(1000000);
+  });
+
+  it('guarantees 64-character hex strings for pseudonym_hmac', async () => {
+    const rawUuid = 'f47ac10b-58cc-4372-a567-0e02b2c3d479'; // 36 chars
+    const hmacHex = await ensure64CharHex(rawUuid);
+    expect(hmacHex).toHaveLength(64);
+
+    const existing64Hex = 'a'.repeat(64);
+    const result64 = await ensure64CharHex(existing64Hex);
+    expect(result64).toBe(existing64Hex);
   });
 });
