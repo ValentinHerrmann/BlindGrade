@@ -16,10 +16,11 @@ export interface CsvExportRow {
 export async function exportGradesToCsv(
   examId: string,
   examTitle: string,
-  rows: CsvExportRow[]
+  rows: CsvExportRow[],
+  key: CryptoKey | null
 ): Promise<void> {
   // 1. Audit log export action
-  await logExportAction(examId, 'CSV');
+  await logExportAction(examId, 'CSV', key);
 
   // 2. Build RFC 4180 CSV string
   let csvContent = 'Pseudonym ID,Fallback Code,Total Score\r\n';

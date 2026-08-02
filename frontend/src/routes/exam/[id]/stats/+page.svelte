@@ -1,14 +1,12 @@
 <script lang="ts">
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
-  import { db } from '$lib/db/db';
   import type { ExamRecord, SubmissionRecord, StudentRecord } from '$lib/db/schema';
-  import { loadExamEncrypted, decryptSubmission, decryptStudent, encryptAuditEntry } from '$lib/db/dbEncryption';
+  import { loadExamEncrypted } from '$lib/db/dbEncryption';
   import { submissionRepository } from '$lib/repositories/submissionRepository';
   import { studentRepository } from '$lib/repositories/studentRepository';
   import { sessionStore } from '$lib/stores/session';
   import { calculateSummaryStats, type SummaryStats } from '$lib/analytics/stats';
-  import { checkKAnonymity } from '$lib/analytics/kanonymity';
   import { exportGradesToCsv } from '$lib/analytics/csvExport';
   import { get } from 'svelte/store';
 
@@ -34,13 +32,13 @@
     stats = calculateSummaryStats(scores);
   });
 
-  $: kCheck = checkKAnonymity(submissions.length);
+  $: maxBinCount = stats ? Math.max(...stats.histogram.map((b) => b.count), 1) : 1;
 
   async function confirmAndExport() {
     showConfirmModal = false;
     const key = get(sessionStore).sessionKey;
     const rows = students.map((st) => {
-      const sub = submissions.find((s) => s.pseudonymHash === st.pseudonymId || s.examId === st.examId);
+      const sub = submissions.find((s) => s.pseudonymHash === st.pseudonymId);
       return {
         studentPseudonymId: st.pseudonymId,
         fallbackCode: st.fallbackCode || '',
@@ -48,28 +46,14 @@
       };
     });
 
-    const encryptedAudit = await encryptAuditEntry({
-      id: crypto.randomUUID(),
-      action: 'EXPORT',
-      targetId: examId,
-      timestamp: new Date().toISOString(),
-      note: `CSV grade export for ${exam?.title || 'Exam'} (${rows.length} rows)`,
-    }, key);
-    await db.auditLog.add(encryptedAudit);
-
-    await exportGradesToCsv(examId, exam?.title || 'Exam', rows);
+    await exportGradesToCsv(examId, exam?.title || 'Exam', rows, key);
   }
 </script>
 
 <div class="stats-page">
   <h2>Class Grade Analytics & Export</h2>
 
-  {#if !kCheck.satisfied}
-    <div class="k-suppressed-banner">
-      <h3>k-Anonymity Gate Warning</h3>
-      <p>{kCheck.message}</p>
-    </div>
-  {:else if stats}
+  {#if stats}
     <div class="stats-grid">
       <div class="stat-card">
         <span class="label">Submissions</span>
@@ -95,7 +79,7 @@
         {#each stats.histogram as bin}
           <div class="bar-col">
             <span class="count">{bin.count}</span>
-            <div class="bar" style="height: {bin.count * 30}px"></div>
+            <div class="bar" style="height: {Math.round((bin.count / maxBinCount) * 160)}px"></div>
             <span class="range">{bin.binStart} - {bin.binEnd}</span>
           </div>
         {/each}

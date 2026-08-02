@@ -24,17 +24,20 @@
   let exercises: ExerciseRecord[] = [];
   let currentIndex = 0;
   let scoreInputs: Record<string, number> = {};
+  let manualOverride: Record<string, boolean> = {};
+  let activeExerciseId: string = "";
   let totalScore = 0;
   let isSaving = false;
 
   let scanCanvas: HTMLCanvasElement;
   let overlayCanvas: HTMLCanvasElement;
   let isDrawing = false;
-  let drawTool: "pen" | "check" | "cross" = "pen";
+  type ToolType = "pen" | "check_full" | "check_half" | "check_quarter" | "cross" | "check";
+  let drawTool: ToolType = "pen";
   let penColor = "#ef4444";
 
   interface VectorStroke {
-    tool: "pen" | "check" | "cross";
+    tool: ToolType;
     points: { x: number; y: number }[];
     color: string;
   }
@@ -54,10 +57,20 @@
     );
   }
 
+  function addAutoScore(exId: string, maxPoints: number, points: number) {
+    const current = Number(scoreInputs[exId]) || 0;
+    scoreInputs[exId] = Math.min(maxPoints, Math.round((current + points) * 100) / 100);
+    manualOverride[exId] = false;
+    scoreInputs = scoreInputs;
+  }
+
   onMount(async () => {
     if (!examId) return;
     const key = get(sessionStore).sessionKey;
     exercises = await loadExamExercisesEncrypted(examId, key);
+    if (exercises.length > 0 && !activeExerciseId) {
+      activeExerciseId = exercises[0].id;
+    }
     submissions = await submissionRepository.getByExamId(examId, key);
     if (submissions.length > 0) {
       initExerciseScores(submissions[0]);
@@ -65,7 +78,11 @@
   });
 
   async function initExerciseScores(sub: SubmissionRecord) {
+    manualOverride = {};
     scoreInputs = {};
+    if (exercises.length > 0 && !activeExerciseId) {
+      activeExerciseId = exercises[0].id;
+    }
     const key = get(sessionStore).sessionKey;
     const existingScores = await loadScoresEncrypted(sub.id, key);
     if (existingScores.length > 0) {
@@ -75,9 +92,11 @@
         }
       });
     } else if (sub.totalScore !== undefined) {
-      const perEx = sub.totalScore / (exercises.length || 1);
+      const totalMax = exercises.reduce((s, ex) => s + (ex.maxPoints || 0), 0);
       exercises.forEach((ex) => {
-        scoreInputs[ex.id] = perEx;
+        scoreInputs[ex.id] = totalMax > 0
+          ? Math.round(sub.totalScore! * (ex.maxPoints / totalMax) * 100) / 100
+          : 0;
       });
     } else {
       exercises.forEach((ex) => {
@@ -161,7 +180,7 @@
     }
   }
 
-  function handleMouseDown(e: MouseEvent) {
+  function handleMouseDown(e: PointerEvent | MouseEvent) {
     if (!overlayCanvas) return;
     const rect = overlayCanvas.getBoundingClientRect();
     const scaleX = overlayCanvas.width / rect.width;
@@ -169,12 +188,28 @@
     const x = (e.clientX - rect.left) * scaleX;
     const y = (e.clientY - rect.top) * scaleY;
 
-    if (drawTool === "check" || drawTool === "cross") {
+    const isStamp = drawTool !== "pen";
+    if (isStamp) {
+      const color = drawTool === "cross" ? "#ef4444" : "#22c55e";
       currentStrokes.push({
         tool: drawTool,
         points: [{ x, y }],
-        color: drawTool === "check" ? "#22c55e" : "#ef4444",
+        color,
       });
+
+      // Automatically accumulate score for active exercise based on stamp placed
+      let pointsToAdd = 0;
+      if (drawTool === "check_full" || drawTool === "check") pointsToAdd = 1.0;
+      else if (drawTool === "check_half") pointsToAdd = 0.5;
+      else if (drawTool === "check_quarter") pointsToAdd = 0.25;
+
+      if (pointsToAdd > 0) {
+        const targetEx = exercises.find((ex) => ex.id === activeExerciseId) || exercises[0];
+        if (targetEx) {
+          addAutoScore(targetEx.id, targetEx.maxPoints, pointsToAdd);
+        }
+      }
+
       sessionStore.setDirty(true);
       redrawOverlay();
       return;
@@ -189,7 +224,7 @@
     sessionStore.setDirty(true);
   }
 
-  function handleMouseMove(e: MouseEvent) {
+  function handleMouseMove(e: PointerEvent | MouseEvent) {
     if (!isDrawing || !overlayCanvas) return;
     const rect = overlayCanvas.getBoundingClientRect();
     const scaleX = overlayCanvas.width / rect.width;
@@ -224,10 +259,18 @@
           else ctx.lineTo(p.x, p.y);
         });
         ctx.stroke();
-      } else if (stroke.tool === "check") {
+      } else if (stroke.tool === "check_full" || stroke.tool === "check") {
         const p = stroke.points[0];
         ctx.font = "bold 36px sans-serif";
         ctx.fillText("✓", p.x, p.y);
+      } else if (stroke.tool === "check_half") {
+        const p = stroke.points[0];
+        ctx.font = "bold 32px sans-serif";
+        ctx.fillText("½✓", p.x, p.y);
+      } else if (stroke.tool === "check_quarter") {
+        const p = stroke.points[0];
+        ctx.font = "bold 32px sans-serif";
+        ctx.fillText("¼✓", p.x, p.y);
       } else if (stroke.tool === "cross") {
         const p = stroke.points[0];
         ctx.font = "bold 36px sans-serif";
@@ -337,12 +380,20 @@
             on:click={() => (drawTool = "pen")}>🖊 Red Pen</button
           >
           <button
-            class:active={drawTool === "check"}
-            on:click={() => (drawTool = "check")}>✓ Correct Stamp</button
+            class:active={drawTool === "check_full" || drawTool === "check"}
+            on:click={() => (drawTool = "check_full")}>✓ Full (+1 pt)</button
+          >
+          <button
+            class:active={drawTool === "check_half"}
+            on:click={() => (drawTool = "check_half")}>½✓ Half (+0.5 pt)</button
+          >
+          <button
+            class:active={drawTool === "check_quarter"}
+            on:click={() => (drawTool = "check_quarter")}>¼✓ Quarter (+0.25 pt)</button
           >
           <button
             class:active={drawTool === "cross"}
-            on:click={() => (drawTool = "cross")}>✗ Wrong Stamp</button
+            on:click={() => (drawTool = "cross")}>✗ Wrong (0 pt)</button
           >
           <button class="clear-btn" on:click={clearAnnotations}
             >Clear Overlay</button
@@ -357,6 +408,9 @@
             on:mousedown={handleMouseDown}
             on:mousemove={handleMouseMove}
             on:mouseup={handleMouseUp}
+            on:pointerdown={handleMouseDown}
+            on:pointermove={handleMouseMove}
+            on:pointerup={handleMouseUp}
           ></canvas>
         </div>
       </div>
@@ -364,18 +418,44 @@
       <div class="grading-panel">
         <h3>Exercise Scores</h3>
         {#each exercises as ex}
-          <div class="ex-item">
-            <label for={`score-${ex.id}`}
-              >Question {ex.orderIndex} ({ex.questionType}, max {ex.maxPoints} pts)</label
-            >
-            <input
-              id={`score-${ex.id}`}
-              type="number"
-              step="0.5"
-              min="0"
-              max={ex.maxPoints}
-              bind:value={scoreInputs[ex.id]}
-            />
+          <div
+            class="ex-item"
+            class:active={ex.id === activeExerciseId}
+            on:click={() => (activeExerciseId = ex.id)}
+            role="button"
+            tabindex="0"
+            on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') activeExerciseId = ex.id; }}
+          >
+            <div class="ex-header">
+              <label for={`score-${ex.id}`}
+                >Question {ex.orderIndex} ({ex.questionType}, max {ex.maxPoints} pts)</label
+              >
+              {#if ex.id === activeExerciseId}
+                <span class="target-badge">Stempel-Ziel</span>
+              {/if}
+            </div>
+            <div class="score-input-row">
+              <input
+                id={`score-${ex.id}`}
+                type="number"
+                step="0.25"
+                min="0"
+                max={ex.maxPoints}
+                bind:value={scoreInputs[ex.id]}
+                on:input={() => { manualOverride[ex.id] = true; }}
+              />
+              <button
+                type="button"
+                class="reset-btn"
+                title="Punkte auf 0 zurücksetzen"
+                on:click={(e) => {
+                  e.stopPropagation();
+                  scoreInputs[ex.id] = 0;
+                  manualOverride[ex.id] = false;
+                  scoreInputs = scoreInputs;
+                }}>×</button>
+            </div>
+            {#if manualOverride[ex.id]}<span class="override-badge">manuell</span>{/if}
           </div>
         {/each}
 
@@ -513,9 +593,75 @@
   .ex-item {
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 0.35rem;
     margin-bottom: 1rem;
     font-size: 0.875rem;
+    padding: 0.6rem;
+    border-radius: 6px;
+    border: 1px solid #334155;
+    background: #0f172a;
+    cursor: pointer;
+    transition: all 0.15s ease-in-out;
+  }
+
+  .ex-item.active {
+    border-color: #38bdf8;
+    background: rgba(56, 189, 248, 0.08);
+    box-shadow: 0 0 8px rgba(56, 189, 248, 0.15);
+  }
+
+  .ex-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .target-badge {
+    font-size: 0.65rem;
+    color: #38bdf8;
+    background: rgba(56, 189, 248, 0.15);
+    border: 1px solid #38bdf8;
+    border-radius: 3px;
+    padding: 0.1rem 0.35rem;
+    font-weight: 600;
+  }
+
+  .score-input-row {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+  }
+
+  .score-input-row input {
+    flex: 1;
+  }
+
+  .reset-btn {
+    padding: 0.4rem 0.6rem;
+    background: #334155;
+    border: 1px solid #475569;
+    color: #f87171;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 1rem;
+    line-height: 1;
+  }
+
+  .reset-btn:hover {
+    background: #475569;
+    color: #ef4444;
+  }
+
+  .override-badge {
+    font-size: 0.65rem;
+    color: #f59e0b;
+    background: rgba(245,158,11,0.12);
+    border: 1px solid #f59e0b;
+    border-radius: 3px;
+    padding: 0.1rem 0.3rem;
+    margin-top: 0.2rem;
+    display: inline-block;
+    align-self: flex-start;
   }
 
   .total-section {

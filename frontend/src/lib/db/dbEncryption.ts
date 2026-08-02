@@ -10,6 +10,7 @@
  */
 
 import { encrypt, decrypt } from '$lib/crypto/aesGcm';
+import { db } from '$lib/db/db';
 import type {
   ExamRecord,
   ExerciseRecord,
@@ -551,10 +552,13 @@ export async function saveSubmissionEncrypted(submission: SubmissionRecord, key:
 }
 
 export async function loadScoresEncrypted(submissionId: string, key: CryptoKey | null): Promise<ExerciseScoreRecord[]> {
-  return [];
+  const raw = await db.exerciseScores.where('submissionId').equals(submissionId).toArray();
+  return Promise.all(raw.map((sc) => decryptScore(sc, key)));
 }
 
 export async function saveScoreEncrypted(scoreRec: ExerciseScoreRecord, key: CryptoKey | null): Promise<string> {
+  const encrypted = await encryptScore(scoreRec, key);
+  await db.exerciseScores.put(encrypted);
   return scoreRec.id;
 }
 

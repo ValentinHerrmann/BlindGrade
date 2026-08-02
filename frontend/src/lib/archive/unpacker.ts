@@ -20,14 +20,7 @@ import { deriveSessionKey } from '$lib/crypto/sessionKey';
 import { db, clearAllTables } from '$lib/db/db';
 import { sessionStore } from '$lib/stores/session';
 import { projectStore } from '$lib/stores/project';
-import {
-  encryptExam,
-  encryptExercise,
-  encryptStudent,
-  encryptSubmission,
-  encryptScore,
-  encryptAuditEntry,
-} from '$lib/db/dbEncryption';
+import { encryptScore } from '$lib/db/dbEncryption';
 import { get } from 'svelte/store';
 import { inflateSync } from 'fflate';
 import type { ExamRecord, ExerciseRecord, ExerciseScoreRecord, StudentRecord, SubmissionRecord, AuditEntry } from '$lib/db/schema';
@@ -244,6 +237,10 @@ export async function unpackProject(
   for (const st of students) await studentRepository.save(st, key);
   for (const sub of submissions) await submissionRepository.save(sub, key);
   if (examExercises.length > 0) await db.examExercises.bulkPut(examExercises);
+  for (const es of exerciseScores) {
+    const encrypted = await encryptScore(es, key);
+    await db.exerciseScores.put(encrypted);
+  }
 
 
 

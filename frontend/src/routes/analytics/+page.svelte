@@ -4,7 +4,7 @@
   import { sessionStore, isUnlocked } from '$lib/stores/session';
   import { db } from '$lib/db/db';
   import type { ExamRecord } from '$lib/db/schema';
-  import { loadExamsEncrypted } from '$lib/db/dbEncryption';
+import { loadExamsEncrypted, decryptExercise, decryptScore } from '$lib/db/dbEncryption';
   import { submissionRepository } from '$lib/repositories/submissionRepository';
 
   interface ExercisePerformance {
@@ -64,10 +64,12 @@
     const key = get(sessionStore).sessionKey;
     exams = await loadExamsEncrypted(key);
 
-    const allExercises = await db.exercises.toArray();
+    const rawExercises = await db.exercises.toArray();
+    const allExercises = await Promise.all(rawExercises.map((ex) => decryptExercise(ex, key)));
     const allExamExercises = await db.examExercises.toArray();
     const allSubmissions = await submissionRepository.getAll(key);
-    const allScores = await db.exerciseScores.toArray();
+    const rawScores = await db.exerciseScores.toArray();
+    const allScores = await Promise.all(rawScores.map((sc) => decryptScore(sc, key)));
 
     totalSubmissionsCount = allSubmissions.length;
 
@@ -329,9 +331,9 @@
       </div>
 
       <div class="kpi-card">
-        <span class="kpi-title">Overall Average Score</span>
+        <span class="kpi-title">Avg. Score (pts)</span>
         <span class="kpi-value">
-          {overallAvgScore !== null ? `${overallAvgScore}%` : 'N/A'}
+          {overallAvgScore !== null ? `${overallAvgScore} pts` : 'N/A'}
         </span>
         <span class="kpi-sub">{overallAvgScore !== null ? 'Across graded exams' : 'No scores recorded'}</span>
       </div>
