@@ -23,10 +23,15 @@ export async function encrypt(key: CryptoKey, plaintext: Uint8Array): Promise<En
   const iv = new Uint8Array(12);
   crypto.getRandomValues(iv); // Fresh random IV — never reuse
 
+  const plaintextBuffer =
+    plaintext.byteOffset === 0 && plaintext.byteLength === plaintext.buffer.byteLength
+      ? (plaintext.buffer as ArrayBuffer)
+      : (plaintext.buffer.slice(plaintext.byteOffset, plaintext.byteOffset + plaintext.byteLength) as ArrayBuffer);
+
   const ciphertextBuffer = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: iv.buffer as ArrayBuffer },
+    { name: 'AES-GCM', iv },
     key,
-    plaintext.buffer as ArrayBuffer
+    plaintextBuffer
   );
 
   return {
@@ -45,10 +50,20 @@ export async function decrypt(
   ciphertext: Uint8Array,
   iv: Uint8Array
 ): Promise<Uint8Array> {
+  const ciphertextBuffer =
+    ciphertext.byteOffset === 0 && ciphertext.byteLength === ciphertext.buffer.byteLength
+      ? (ciphertext.buffer as ArrayBuffer)
+      : (ciphertext.buffer.slice(ciphertext.byteOffset, ciphertext.byteOffset + ciphertext.byteLength) as ArrayBuffer);
+
+  const ivBuffer =
+    iv.byteOffset === 0 && iv.byteLength === iv.buffer.byteLength
+      ? (iv.buffer as ArrayBuffer)
+      : (iv.buffer.slice(iv.byteOffset, iv.byteOffset + iv.byteLength) as ArrayBuffer);
+
   const plaintextBuffer = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: iv.buffer as ArrayBuffer },
+    { name: 'AES-GCM', iv: ivBuffer },
     key,
-    ciphertext.buffer as ArrayBuffer
+    ciphertextBuffer
   );
   return new Uint8Array(plaintextBuffer);
 }
@@ -77,4 +92,26 @@ export function fromBase64url(b64: string): Uint8Array {
   const padded = b64.replace(/-/g, '+').replace(/_/g, '/');
   const binary = atob(padded);
   return new Uint8Array(binary.length).map((_, i) => binary.charCodeAt(i));
+}
+
+/**
+ * Decodes a Base64 or Base64URL string to a Uint8Array.
+ * Supports chunked decoding, whitespace trimming, padding restoration,
+ * and Base64URL character replacement (- and _ instead of + and /).
+ */
+export function base64ToUint8Array(b64: string): Uint8Array {
+  if (!b64 || !b64.trim()) return new Uint8Array(0);
+
+  let normalized = b64.trim().replace(/-/g, '+').replace(/_/g, '/');
+  const pad = (4 - (normalized.length % 4)) % 4;
+  if (pad < 4) {
+    normalized += '='.repeat(pad);
+  }
+
+  const binary = atob(normalized);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
 }

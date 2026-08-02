@@ -5,7 +5,7 @@ import { storagePolicyStore } from '$lib/stores/storagePolicy';
 import { encryptStudent, decryptStudent } from '$lib/db/dbEncryption';
 import { enqueueRequest } from '$lib/services/offlineQueue';
 import type { StudentRecord } from '$lib/db/schema';
-import { uint8ArrayToBase64 } from '$lib/crypto/aesGcm';
+import { uint8ArrayToBase64, base64ToUint8Array } from '$lib/crypto/aesGcm';
 import { ensure64CharHex } from '$lib/crypto/hmac';
 
 export const studentRepository = {
@@ -21,8 +21,8 @@ export const studentRepository = {
           pseudonymId: st.pseudonym_hmac || st.pseudonymId,
           examId: st.exam_id || st.examId || '',
           fallbackCode: st.fallback_code || st.fallbackCode,
-          piiCt: st.pii_ciphertext_b64 ? Uint8Array.from(atob(st.pii_ciphertext_b64), (c) => c.charCodeAt(0)) : new Uint8Array(0),
-          piiIv: st.iv_b64 ? Uint8Array.from(atob(st.iv_b64), (c) => c.charCodeAt(0)) : new Uint8Array(12),
+          piiCt: st.pii_ciphertext_b64 ? base64ToUint8Array(st.pii_ciphertext_b64) : new Uint8Array(0),
+          piiIv: st.iv_b64 ? base64ToUint8Array(st.iv_b64) : new Uint8Array(12),
         }));
       } catch {
         return [];
@@ -42,8 +42,8 @@ export const studentRepository = {
           pseudonymId: st.pseudonym_hmac || st.pseudonymId,
           examId: st.exam_id || examId,
           fallbackCode: st.fallback_code || st.fallbackCode,
-          piiCt: st.pii_ciphertext_b64 ? Uint8Array.from(atob(st.pii_ciphertext_b64), (c) => c.charCodeAt(0)) : new Uint8Array(0),
-          piiIv: st.iv_b64 ? Uint8Array.from(atob(st.iv_b64), (c) => c.charCodeAt(0)) : new Uint8Array(12),
+          piiCt: st.pii_ciphertext_b64 ? base64ToUint8Array(st.pii_ciphertext_b64) : new Uint8Array(0),
+          piiIv: st.iv_b64 ? base64ToUint8Array(st.iv_b64) : new Uint8Array(12),
         }));
       } catch {
         return [];

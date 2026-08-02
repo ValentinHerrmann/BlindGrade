@@ -5,7 +5,7 @@ import { storagePolicyStore } from '$lib/stores/storagePolicy';
 import { encryptSubmission, decryptSubmission } from '$lib/db/dbEncryption';
 import { enqueueRequest } from '$lib/services/offlineQueue';
 import type { SubmissionRecord } from '$lib/db/schema';
-import { uint8ArrayToBase64 } from '$lib/crypto/aesGcm';
+import { uint8ArrayToBase64, base64ToUint8Array } from '$lib/crypto/aesGcm';
 import { ensure64CharHex } from '$lib/crypto/hmac';
 
 export const submissionRepository = {
@@ -65,10 +65,10 @@ export const submissionRepository = {
           pseudonymHash: s.pseudonym_hmac || s.pseudonymHash,
           totalScore: s.total_score ?? s.totalScore ?? 0,
           createdAt: s.created_at || s.createdAt || new Date().toISOString(),
-          scanCt: s.scan_ciphertext_b64 ? Uint8Array.from(atob(s.scan_ciphertext_b64), (c) => c.charCodeAt(0)) : undefined,
-          scanIv: s.scan_iv_b64 ? Uint8Array.from(atob(s.scan_iv_b64), (c) => c.charCodeAt(0)) : undefined,
-          annotationCt: s.annotation_ciphertext_b64 ? Uint8Array.from(atob(s.annotation_ciphertext_b64), (c) => c.charCodeAt(0)) : undefined,
-          annotationIv: s.annotation_iv_b64 ? Uint8Array.from(atob(s.annotation_iv_b64), (c) => c.charCodeAt(0)) : undefined,
+          scanCt: s.scan_ciphertext_b64 ? base64ToUint8Array(s.scan_ciphertext_b64) : undefined,
+          scanIv: s.scan_iv_b64 ? base64ToUint8Array(s.scan_iv_b64) : undefined,
+          annotationCt: s.annotation_ciphertext_b64 ? base64ToUint8Array(s.annotation_ciphertext_b64) : undefined,
+          annotationIv: s.annotation_iv_b64 ? base64ToUint8Array(s.annotation_iv_b64) : undefined,
         };
       } catch {
         return null;

@@ -152,7 +152,7 @@
 
       previewIsPdf = isPdf;
       const mimeType = isPdf ? "application/pdf" : "image/png";
-      const blob = new Blob([decryptedBytes.buffer as ArrayBuffer], { type: mimeType });
+      const blob = new Blob([decryptedBytes], { type: mimeType });
       previewObjectUrl = URL.createObjectURL(blob);
     } catch (err) {
       console.error("Preview decryption failed:", err);

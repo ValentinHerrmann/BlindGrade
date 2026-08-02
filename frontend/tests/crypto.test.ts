@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { encrypt, decrypt, toBase64url, fromBase64url, uint8ArrayToBase64 } from '../src/lib/crypto/aesGcm';
+import { encrypt, decrypt, toBase64url, fromBase64url, uint8ArrayToBase64, base64ToUint8Array } from '../src/lib/crypto/aesGcm';
 import { hmacPseudonymId, importHmacKey, hmacSha256Hex, ensure64CharHex } from '../src/lib/crypto/hmac';
 import { deriveSessionKey, generateSessionNonce } from '../src/lib/crypto/sessionKey';
 import { getUserSalt, getUserSessionNonce } from '../src/lib/crypto/keyDerivation';
@@ -82,6 +82,36 @@ describe('AES-256-GCM Cryptography', () => {
     const b64 = toBase64url(original);
     const decoded = fromBase64url(b64);
     expect(decoded).toEqual(original);
+  });
+
+  it('correctly decodes base64 and base64url with base64ToUint8Array', () => {
+    const original = new Uint8Array([72, 101, 108, 108, 111, 44, 32, 87, 111, 114, 108, 100, 33]);
+    const b64 = uint8ArrayToBase64(original);
+    expect(base64ToUint8Array(b64)).toEqual(original);
+
+    const b64url = toBase64url(original);
+    expect(base64ToUint8Array(b64url)).toEqual(original);
+
+    expect(base64ToUint8Array('')).toEqual(new Uint8Array(0));
+  });
+
+  it('encrypts and decrypts typed array views with non-zero byteOffset', async () => {
+    const rawKey = new Uint8Array(32).fill(9);
+    const key = await crypto.subtle.importKey(
+      'raw',
+      rawKey,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt']
+    );
+
+    const fullBuffer = new Uint8Array([10, 20, 30, 40, 50, 60, 70, 80, 90, 100]);
+    const slicedPayload = fullBuffer.subarray(2, 8); // [30, 40, 50, 60, 70, 80] with byteOffset 2
+
+    const { ciphertext, iv } = await encrypt(key, slicedPayload);
+    const decrypted = await decrypt(key, ciphertext, iv);
+
+    expect(decrypted).toEqual(slicedPayload);
   });
 });
 
