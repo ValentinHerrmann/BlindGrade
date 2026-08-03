@@ -15,7 +15,7 @@
   import { calculateGrade, calculateGradeDetail, type GradeDetail } from "$lib/analytics/gradingKey";
   import { api } from "$lib/api/client";
   import { submissionRepository } from "$lib/repositories/submissionRepository";
-  import { sessionStore } from "$lib/stores/session";
+  import { sessionStore, isUnlocked } from "$lib/stores/session";
   import { storagePolicyStore } from "$lib/stores/storagePolicy";
   import { decrypt, encrypt } from "$lib/crypto/aesGcm";
   import { get } from "svelte/store";
@@ -82,10 +82,12 @@
   }
 
   $: {
-    totalScore = Object.values(scoreInputs).reduce(
-      (sum, val) => sum + (Number(val) || 0),
-      0,
-    );
+    totalScore = Math.round(
+      Object.values(scoreInputs).reduce(
+        (sum, val) => sum + (Number(val) || 0),
+        0
+      ) * 100
+    ) / 100;
   }
 
   $: totalMaxPoints = exercises.reduce((sum, ex) => sum + (ex.maxPoints || 0), 0);
@@ -195,6 +197,9 @@
 
   onMount(async () => {
     if (!examId) return;
+    if (!get(isUnlocked)) {
+      await sessionStore.initAnonymousSession();
+    }
     const key = get(sessionStore).sessionKey;
     exam = (await loadExamEncrypted(examId, key)) || null;
     exercises = await loadExamExercisesEncrypted(examId, key);
@@ -203,7 +208,7 @@
     }
     submissions = await submissionRepository.getByExamId(examId, key);
     if (submissions.length > 0) {
-      initExerciseScores(submissions[0]);
+      await initExerciseScores(submissions[0]);
     }
   });
 
@@ -215,19 +220,27 @@
     }
     const key = get(sessionStore).sessionKey;
     const existingScores = await loadScoresEncrypted(sub.id, key);
-    if (existingScores.length > 0) {
-      existingScores.forEach((es) => {
-        if (es.score !== undefined) {
-          scoreInputs[es.exerciseId] = es.score;
+    const validScores = existingScores.filter(
+      (es) => typeof es.score === "number" && !isNaN(es.score)
+    );
+
+    if (validScores.length > 0) {
+      validScores.forEach((es) => {
+        scoreInputs[es.exerciseId] = es.score!;
+      });
+      exercises.forEach((ex) => {
+        if (scoreInputs[ex.id] === undefined) {
+          scoreInputs[ex.id] = 0;
         }
       });
-    } else if (sub.totalScore !== undefined) {
+    } else if (existingScores.length === 0 && sub.totalScore !== undefined) {
+      // In-memory UI fallback ONLY — DO NOT write fake scores to IndexedDB
       const totalMax = exercises.reduce((s, ex) => s + (ex.maxPoints || 0), 0);
-      exercises.forEach((ex) => {
+      for (const ex of exercises) {
         scoreInputs[ex.id] = totalMax > 0
           ? Math.round(sub.totalScore! * (ex.maxPoints / totalMax) * 100) / 100
           : 0;
-      });
+      }
     } else {
       exercises.forEach((ex) => {
         scoreInputs[ex.id] = 0;
@@ -314,6 +327,9 @@
             const jsonStr = new TextDecoder().decode(annBytes);
             currentStrokes = JSON.parse(jsonStr);
             redrawOverlay();
+            if (currentStrokes.some((s) => s.tool !== "pen" && s.tool !== "line" && s.tool !== "eraser")) {
+              recalculateAutoScores();
+            }
           });
         } else {
           currentStrokes = [];

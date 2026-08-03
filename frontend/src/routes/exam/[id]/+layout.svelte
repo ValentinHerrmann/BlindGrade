@@ -1,6 +1,8 @@
 <script lang="ts">
   import { page } from "$app/stores";
   import { onMount } from "svelte";
+  import { browser } from "$app/environment";
+  import { afterNavigate } from "$app/navigation";
   import { get } from "svelte/store";
   import { sessionStore } from "$lib/stores/session";
   import { loadExamEncrypted } from "$lib/db/dbEncryption";
@@ -14,9 +16,15 @@
   let exam: ExamRecord | null = null;
   let submissionCount = 0;
 
-  $: if (examId) {
+  $: if (browser && examId && $sessionStore.sessionKey) {
     loadExamHeaderData(examId);
   }
+
+  afterNavigate(() => {
+    if (examId && $sessionStore.sessionKey) {
+      loadExamHeaderData(examId);
+    }
+  });
 
   async function loadExamHeaderData(id: string) {
     const key = get(sessionStore).sessionKey;

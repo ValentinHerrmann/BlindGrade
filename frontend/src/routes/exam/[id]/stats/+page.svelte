@@ -1,6 +1,8 @@
 <script lang="ts">
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
+  import { browser } from '$app/environment';
+  import { afterNavigate } from '$app/navigation';
   import type { ExamRecord, SubmissionRecord, StudentRecord } from '$lib/db/schema';
   import { loadExamEncrypted } from '$lib/db/dbEncryption';
   import { submissionRepository } from '$lib/repositories/submissionRepository';
@@ -10,7 +12,7 @@
   import { exportGradesToCsv } from '$lib/analytics/csvExport';
   import { get } from 'svelte/store';
 
-  const examId = $page.params.id || '';
+  $: examId = $page.params.id || '';
 
   let exam: ExamRecord | null = null;
   let submissions: SubmissionRecord[] = [];
@@ -18,19 +20,35 @@
   let stats: SummaryStats | null = null;
   let showConfirmModal = false;
 
+  $: if (browser && examId && $sessionStore.sessionKey) {
+    loadStats(examId);
+  }
+
+  afterNavigate(() => {
+    if (examId && $sessionStore.sessionKey) {
+      loadStats(examId);
+    }
+  });
+
   onMount(async () => {
-    if (!examId) return;
+    if (examId && $sessionStore.sessionKey) {
+      await loadStats(examId);
+    }
+  });
+
+  async function loadStats(id: string) {
+    if (!id) return;
     const key = get(sessionStore).sessionKey;
-    exam = (await loadExamEncrypted(examId, key)) || null;
-    submissions = await submissionRepository.getByExamId(examId, key);
-    students = await studentRepository.getByExamId(examId, key);
+    exam = (await loadExamEncrypted(id, key)) || null;
+    submissions = await submissionRepository.getByExamId(id, key);
+    students = await studentRepository.getByExamId(id, key);
 
     const scores = submissions
       .map((s) => s.totalScore)
       .filter((s): s is number => s !== undefined && s !== null);
 
     stats = calculateSummaryStats(scores);
-  });
+  }
 
   $: maxBinCount = stats ? Math.max(...stats.histogram.map((b) => b.count), 1) : 1;
 

@@ -1,10 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { browser } from '$app/environment';
+  import { afterNavigate } from '$app/navigation';
   import { get } from 'svelte/store';
   import { sessionStore, isUnlocked } from '$lib/stores/session';
   import { db } from '$lib/db/db';
-  import type { ExamRecord } from '$lib/db/schema';
-import { loadExamsEncrypted, decryptExercise, decryptScore } from '$lib/db/dbEncryption';
+  import type { ExamRecord, ExerciseRecord } from '$lib/db/schema';
+  import { loadExamsEncrypted, loadExercisesEncrypted, decryptExercise, decryptScore } from '$lib/db/dbEncryption';
   import { submissionRepository } from '$lib/repositories/submissionRepository';
 
   interface ExercisePerformance {
@@ -37,6 +39,8 @@ import { loadExamsEncrypted, decryptExercise, decryptScore } from '$lib/db/dbEnc
   }
 
   let isInitializing = true;
+  let activeLoadPromise: Promise<void> | null = null;
+  let pendingReload = false;
   let exams: ExamRecord[] = [];
   let exerciseStats: ExercisePerformance[] = [];
   let variantGroups: VariantGroupComparison[] = [];
@@ -49,23 +53,71 @@ import { loadExamsEncrypted, decryptExercise, decryptScore } from '$lib/db/dbEnc
     ? exerciseStats
     : exerciseStats.filter((e) => e.avgScorePercent !== null);
 
+  $: displayedVariantGroups = showAllExercises
+    ? variantGroups
+    : variantGroups.filter((g) => g.variants.some((v) => v.avgScorePercent !== null));
+
+  $: if (browser && $isUnlocked && $sessionStore.sessionKey) {
+    triggerAnalyticsLoad();
+  }
+
+  afterNavigate(() => {
+    if ($isUnlocked && $sessionStore.sessionKey) {
+      triggerAnalyticsLoad();
+    }
+  });
+
   onMount(async () => {
     try {
       if (!$isUnlocked) {
         await sessionStore.initAnonymousSession();
       }
-      await loadAnalytics();
+      await triggerAnalyticsLoad();
     } finally {
       isInitializing = false;
     }
   });
 
-  async function loadAnalytics() {
-    const key = get(sessionStore).sessionKey;
-    exams = await loadExamsEncrypted(key);
+  async function triggerAnalyticsLoad() {
+    if (activeLoadPromise) {
+      pendingReload = true;
+      await activeLoadPromise;
+      if (pendingReload) {
+        pendingReload = false;
+        return triggerAnalyticsLoad();
+      }
+      return;
+    }
 
+    activeLoadPromise = (async () => {
+      try {
+        await loadAnalytics();
+      } finally {
+        activeLoadPromise = null;
+      }
+    })();
+
+    await activeLoadPromise;
+  }
+
+  async function loadAnalytics() {
+    try {
+      const key = get(sessionStore).sessionKey;
+      exams = await loadExamsEncrypted(key);
+
+    const repoExercises = await loadExercisesEncrypted(key);
     const rawExercises = await db.exercises.toArray();
-    const allExercises = await Promise.all(rawExercises.map((ex) => decryptExercise(ex, key)));
+    const decryptedRaw = await Promise.all(rawExercises.map((ex) => decryptExercise(ex, key)));
+
+    const exerciseMap = new Map<string, ExerciseRecord>();
+    repoExercises.forEach((ex) => exerciseMap.set(ex.id, ex));
+    decryptedRaw.forEach((ex) => {
+      if (!exerciseMap.has(ex.id) || ex.exerciseGroupId || ex.variantKey) {
+        exerciseMap.set(ex.id, { ...exerciseMap.get(ex.id), ...ex });
+      }
+    });
+    const allExercises = Array.from(exerciseMap.values());
+
     const allExamExercises = await db.examExercises.toArray();
     const allSubmissions = await submissionRepository.getAll(key);
     const rawScores = await db.exerciseScores.toArray();
@@ -256,6 +308,13 @@ import { loadExamsEncrypted, decryptExercise, decryptScore } from '$lib/db/dbEnc
     const vList: VariantGroupComparison[] = [];
 
     vGroupMap.forEach((gData, gId) => {
+      // Calculate total active exam appearances for the entire variant group
+      let totalGroupExams = 0;
+      gData.variants.forEach((vData) => {
+        totalGroupExams += vData.examIds.size;
+      });
+      if (totalGroupExams === 0) return; // Skip unlinked library items
+
       const variants: VariantDetail[] = [];
       const validPercents: number[] = [];
 
@@ -295,7 +354,10 @@ import { loadExamsEncrypted, decryptExercise, decryptScore } from '$lib/db/dbEnc
     });
 
     variantGroups = vList;
+  } catch (err) {
+    console.error('Failed to load analytics:', err);
   }
+}
 </script>
 
 <div class="analytics-container">
@@ -353,44 +415,66 @@ import { loadExamsEncrypted, decryptExercise, decryptScore } from '$lib/db/dbEnc
     <div class="analytics-sections-grid">
       <!-- Section 1: Variant Fairness & Difficulty Comparison -->
       <div class="section-card margin-bottom">
-      <div class="section-header-row">
-        <div class="section-title-group">
-          <h3>🔀 Exercise Variant Difficulty & Fairness Comparison</h3>
-          <p>Compare performance between different question variants (e.g. Gruppe A vs Gruppe B) to detect unintended difficulty imbalances.</p>
+        <div class="section-header-row">
+          <div class="section-title-group">
+            <h3>🔀 Exercise Variant Difficulty & Fairness Comparison</h3>
+            <p>Compare performance between different question variants (e.g. Gruppe A vs Gruppe B) to detect unintended difficulty imbalances.</p>
+          </div>
+          {#if variantGroups.some((g) => g.variants.some((v) => v.avgScorePercent === null))}
+            <button
+              class="toggle-btn"
+              on:click={() => (showAllExercises = !showAllExercises)}
+            >
+              {showAllExercises ? 'Show Only Graded Exercises' : 'Show All Exercises (Inc. Ungraded)'}
+            </button>
+          {/if}
         </div>
-      </div>
 
-      {#if variantGroups.length === 0}
-        <div class="empty-analytics-box">
-          <div class="empty-icon">🔀</div>
-          <h4>No Multi-Variant Exercise Groups Configured</h4>
-          <p>
-            When you create exercises with variants (e.g. Variant A & Variant B for different test groups), side-by-side fairness ratings and difficulty delta metrics will appear here.
-          </p>
-        </div>
-      {:else}
-        <div class="variant-groups-list">
-          {#each variantGroups as vGroup}
-            <div class="variant-group-card" class:fairness-warning={vGroup.flaggedFairnessIssue}>
-              <div class="variant-group-header">
-                <div>
-                  <h4>{vGroup.groupName}</h4>
-                  {#if vGroup.topicTag}
-                    <span class="tag">{vGroup.topicTag}</span>
-                  {/if}
-                </div>
-                {#if vGroup.maxDeltaPercent !== null}
-                  <div class="delta-badge" class:warning={vGroup.flaggedFairnessIssue}>
-                    {#if vGroup.flaggedFairnessIssue}
-                      ⚠️ {vGroup.maxDeltaPercent}% Difficulty Disparity
-                    {:else}
-                      ✓ {vGroup.maxDeltaPercent}% Variance (Balanced)
+        {#if displayedVariantGroups.length === 0}
+          <div class="empty-analytics-box">
+            <div class="empty-icon">🔀</div>
+            <h4>No Multi-Variant Exercise Groups Configured</h4>
+            <p>
+              {#if variantGroups.length > 0}
+                {variantGroups.length} multi-variant question group(s) are linked to your exams, but none have student grades recorded yet.
+              {:else}
+                When you create exercises with variants (e.g. Variant A & Variant B for different test groups), side-by-side fairness ratings and difficulty delta metrics will appear here.
+              {/if}
+            </p>
+            {#if variantGroups.length > 0}
+              <button
+                class="secondary-toggle-btn"
+                on:click={() => (showAllExercises = !showAllExercises)}
+              >
+                {showAllExercises ? 'Hide Ungraded Exercises' : `Show All ${variantGroups.length} Variant Groups`}
+              </button>
+            {/if}
+          </div>
+        {:else}
+          <div class="variant-groups-list">
+            {#each displayedVariantGroups as vGroup}
+              <div class="variant-group-card" class:fairness-warning={vGroup.flaggedFairnessIssue}>
+                <div class="variant-group-header">
+                  <div>
+                    <h4>{vGroup.groupName}</h4>
+                    {#if vGroup.topicTag}
+                      <span class="tag">{vGroup.topicTag}</span>
                     {/if}
                   </div>
-                {:else}
-                  <span class="status-badge neutral">Awaiting Grading Scores</span>
-                {/if}
-              </div>
+                  {#if vGroup.maxDeltaPercent !== null}
+                    <div class="delta-badge" class:warning={vGroup.flaggedFairnessIssue}>
+                      {#if vGroup.flaggedFairnessIssue}
+                        ⚠️ {vGroup.maxDeltaPercent}% Difficulty Disparity
+                      {:else}
+                        ✓ {vGroup.maxDeltaPercent}% Variance (Balanced)
+                      {/if}
+                    </div>
+                  {:else if vGroup.variants.some((v) => v.avgScorePercent !== null)}
+                    <span class="status-badge neutral">Partial Data (1 Variant Graded)</span>
+                  {:else}
+                    <span class="status-badge neutral">Awaiting Grading Scores</span>
+                  {/if}
+                </div>
 
               <table class="analytics-table compact">
                 <thead>

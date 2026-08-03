@@ -81,6 +81,17 @@ export async function encryptExam(exam: ExamRecord, key: CryptoKey | null): Prom
     const { ct, iv } = await encryptBytes(key, encoder.encode(jsonStr));
     payloadCt = ct;
     payloadIv = iv;
+
+    return {
+      id: exam.id,
+      teacherId: exam.teacherId,
+      retentionUntil: exam.retentionUntil,
+      compilationStatus: exam.compilationStatus,
+      createdAt: exam.createdAt,
+      isDirty: exam.isDirty,
+      payloadCt,
+      payloadIv,
+    };
   }
 
   return {
@@ -90,6 +101,18 @@ export async function encryptExam(exam: ExamRecord, key: CryptoKey | null): Prom
     compilationStatus: exam.compilationStatus,
     createdAt: exam.createdAt,
     isDirty: exam.isDirty,
+    title: exam.title,
+    testart: exam.testart,
+    klasse: exam.klasse,
+    datum: exam.datum,
+    nr: exam.nr,
+    fach: exam.fach,
+    lehrernachname: exam.lehrernachname,
+    infoText: exam.infoText,
+    latexPreamble: exam.latexPreamble,
+    latexTemplate: exam.latexTemplate,
+    numVersions: exam.numVersions,
+    gradingKey: exam.gradingKey,
     payloadCt,
     payloadIv,
   };
@@ -103,6 +126,18 @@ export async function decryptExam(exam: ExamRecord, key: CryptoKey | null): Prom
     compilationStatus: exam.compilationStatus,
     createdAt: exam.createdAt,
     isDirty: exam.isDirty,
+    title: exam.title,
+    testart: exam.testart,
+    klasse: exam.klasse,
+    datum: exam.datum,
+    nr: exam.nr,
+    fach: exam.fach,
+    lehrernachname: exam.lehrernachname,
+    infoText: exam.infoText,
+    latexPreamble: exam.latexPreamble,
+    latexTemplate: exam.latexTemplate,
+    numVersions: exam.numVersions,
+    gradingKey: exam.gradingKey,
     payloadCt: exam.payloadCt,
     payloadIv: exam.payloadIv,
   };
@@ -270,12 +305,22 @@ export async function encryptScore(scoreRec: ExerciseScoreRecord, key: CryptoKey
     const { ct, iv } = await encryptBytes(key, encoder.encode(jsonStr));
     payloadCt = ct;
     payloadIv = iv;
+
+    return {
+      id: scoreRec.id,
+      submissionId: scoreRec.submissionId,
+      exerciseId: scoreRec.exerciseId,
+      payloadCt,
+      payloadIv,
+    };
   }
 
   return {
     id: scoreRec.id,
     submissionId: scoreRec.submissionId,
     exerciseId: scoreRec.exerciseId,
+    score: scoreRec.score,
+    selectedOptions: scoreRec.selectedOptions,
     payloadCt,
     payloadIv,
   };
@@ -286,6 +331,8 @@ export async function decryptScore(scoreRec: ExerciseScoreRecord, key: CryptoKey
     id: scoreRec.id,
     submissionId: scoreRec.submissionId,
     exerciseId: scoreRec.exerciseId,
+    score: scoreRec.score,
+    selectedOptions: scoreRec.selectedOptions,
     payloadCt: scoreRec.payloadCt,
     payloadIv: scoreRec.payloadIv,
   };
@@ -397,12 +444,26 @@ export async function encryptSubmission(submission: SubmissionRecord, key: Crypt
     const { ct, iv } = await encryptBytes(key, encoder.encode(jsonStr));
     payloadCt = ct;
     payloadIv = iv;
+
+    return {
+      id: submission.id,
+      examId: submission.examId,
+      pseudonymHash: submission.pseudonymHash,
+      scanCt: submission.scanCt,
+      scanIv: submission.scanIv,
+      annotationCt: submission.annotationCt,
+      annotationIv: submission.annotationIv,
+      createdAt: submission.createdAt,
+      payloadCt,
+      payloadIv,
+    };
   }
 
   return {
     id: submission.id,
     examId: submission.examId,
     pseudonymHash: submission.pseudonymHash,
+    totalScore: submission.totalScore,
     scanCt: submission.scanCt,
     scanIv: submission.scanIv,
     annotationCt: submission.annotationCt,
