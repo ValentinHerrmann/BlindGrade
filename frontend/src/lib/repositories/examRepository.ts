@@ -47,6 +47,7 @@ function mapExamRecordToApi(exam: ExamRecord): any {
 export const examRepository = {
   async getAll(key: CryptoKey | null): Promise<ExamRecord[]> {
     const policy = get(storagePolicyStore);
+    if (!db.exams) return [];
     if (policy.storageMode === 'all-local') {
       const raw = await db.exams.toArray();
       return Promise.all(raw.map((e) => decryptExam(e, key)));
@@ -66,6 +67,7 @@ export const examRepository = {
 
   async getById(id: string, key: CryptoKey | null): Promise<ExamRecord | undefined> {
     const policy = get(storagePolicyStore);
+    if (!db.exams) return undefined;
     if (policy.storageMode === 'all-local') {
       const raw = await db.exams.get(id);
       if (!raw) return undefined;
@@ -84,6 +86,7 @@ export const examRepository = {
 
   async save(exam: ExamRecord, key: CryptoKey | null): Promise<void> {
     const policy = get(storagePolicyStore);
+    if (!db.exams) return;
     if (policy.storageMode === 'all-local') {
       const encrypted = await encryptExam(exam, key);
       await db.exams.put(encrypted);
@@ -98,6 +101,7 @@ export const examRepository = {
   },
 
   async delete(id: string): Promise<void> {
+    if (!db.exams) return;
     await db.exams.delete(id);
     await db.exercises.where('examId').equals(id).delete();
     await db.examExercises.where('examId').equals(id).delete();

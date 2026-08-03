@@ -1,6 +1,7 @@
 <script lang="ts">
   import { page } from "$app/stores";
   import { onMount } from "svelte";
+  import { browser } from "$app/environment";
   import { db } from "$lib/db/db";
   import type {
     ExamRecord,
@@ -21,7 +22,7 @@
   } from "$lib/db/dbEncryption";
   import { packProject } from "$lib/archive/packer";
   import { compileLatex } from "$lib/latex/compiler";
-  import { formatExerciseLatex } from "$lib/latex/scoreParser";
+  import { formatExerciseLatex, parseExerciseScore } from "$lib/latex/scoreParser";
   import { api } from "$lib/api/client";
   import { submissionRepository } from "$lib/repositories/submissionRepository";
   import { uint8ArrayToBase64 } from "$lib/crypto/aesGcm";
@@ -53,7 +54,7 @@
   let showAngabePreview = true;
   let showLoesungPreview = false;
 
-  $: if (examId) {
+  $: if (browser && examId) {
     loadExam(examId);
   }
 
@@ -500,11 +501,137 @@ ${exerciseInputs}
   let initialSelectedLibraryIds: string[] = [];
   let showLibraryConfirm = false;
   let librarySearch = "";
+  let activeVariantPerGroup: Record<string, string> = {};
+
+  interface VariantMember {
+    ex: ExerciseRecord;
+    variantLabel: string;
+    version: number;
+    isCurrent: boolean;
+  }
+
+  interface ExerciseGroup {
+    groupId: string;
+    name: string;
+    topicTag: string;
+    grade?: string;
+    subject?: string;
+    maxPoints: number;
+    minPoints: number;
+    variants: Map<string, VariantMember[]>;
+    allMembers: VariantMember[];
+  }
 
   $: isLibraryDirty =
     isLibraryModalOpen &&
     (selectedLibraryIds.length !== initialSelectedLibraryIds.length ||
       selectedLibraryIds.some((id, i) => id !== initialSelectedLibraryIds[i]));
+
+  $: filteredLibrary = libraryExercises.filter((ex) => {
+    const q = librarySearch.toLowerCase().trim();
+    return (
+      !q ||
+      (ex.name && ex.name.toLowerCase().includes(q)) ||
+      (ex.topicTag && ex.topicTag.toLowerCase().includes(q)) ||
+      (ex.variantKey && ex.variantKey.toLowerCase().includes(q)) ||
+      (ex.latexBody && ex.latexBody.toLowerCase().includes(q))
+    );
+  });
+
+  $: filteredGroups = groupExercises(filteredLibrary);
+
+  function groupExercises(exs: ExerciseRecord[]): ExerciseGroup[] {
+    const buckets = new Map<string, ExerciseRecord[]>();
+
+    for (const ex of exs) {
+      const key = ex.exerciseGroupId || `name:${ex.name || "Untitled"}`;
+      if (!buckets.has(key)) buckets.set(key, []);
+      buckets.get(key)!.push(ex);
+    }
+
+    const groups: ExerciseGroup[] = [];
+
+    for (const [groupId, members] of buckets) {
+      const currentMembers = members.filter((m) => m.isCurrent !== false);
+      if (currentMembers.length === 0) continue;
+
+      const name = currentMembers[0]?.name || "Untitled";
+      const topicTag = currentMembers[0]?.topicTag || "_General";
+      const grade = currentMembers[0]?.grade;
+      const subject = currentMembers[0]?.subject;
+
+      const variants = new Map<string, VariantMember[]>();
+      for (const ex of currentMembers) {
+        const vKey = ex.variantKey || "_General";
+        if (!variants.has(vKey)) variants.set(vKey, []);
+        variants.get(vKey)!.push({
+          ex,
+          variantLabel: vKey,
+          version: ex.version || 1,
+          isCurrent: ex.isCurrent !== false,
+        });
+      }
+
+      const sortedVariants = new Map<string, VariantMember[]>();
+      const keys = [...variants.keys()].sort((a, b) => {
+        if (a === "_General") return -1;
+        if (b === "_General") return 1;
+        return a.localeCompare(b);
+      });
+      for (const k of keys) sortedVariants.set(k, variants.get(k)!);
+
+      for (const [, vMembers] of sortedVariants) {
+        vMembers.sort((a, b) => b.version - a.version);
+      }
+
+      const allMembers: VariantMember[] = [];
+      for (const [, vMembers] of sortedVariants) {
+        allMembers.push(...vMembers);
+      }
+
+      const scores = allMembers.map((m) => parseExerciseScore(m.ex.latexBody || "") || m.ex.maxPoints || 0);
+      const maxPoints = scores.length > 0 ? Math.max(...scores) : 0;
+      const minPoints = scores.length > 0 ? Math.min(...scores) : 0;
+
+      groups.push({
+        groupId,
+        name,
+        topicTag,
+        grade,
+        subject,
+        maxPoints,
+        minPoints,
+        variants: sortedVariants,
+        allMembers,
+      });
+    }
+
+    groups.sort((a, b) => a.name.localeCompare(b.name));
+    return groups;
+  }
+
+  function setGroupVariant(groupId: string, vKey: string) {
+    activeVariantPerGroup = { ...activeVariantPerGroup, [groupId]: vKey };
+  }
+
+  function getGroupMemberIds(group: ExerciseGroup): string[] {
+    return group.allMembers.map((member) => member.ex.id);
+  }
+
+  function selectGroupVariant(group: ExerciseGroup, vKey: string) {
+    setGroupVariant(group.groupId, vKey);
+  }
+
+  function toggleGroupSelection(group: ExerciseGroup, vKey: string) {
+    setGroupVariant(group.groupId, vKey);
+    const variantId = group.variants.get(vKey)?.[0]?.ex.id;
+    if (!variantId) return;
+    if (selectedLibraryIds.includes(variantId)) {
+      selectedLibraryIds = selectedLibraryIds.filter((id) => id !== variantId);
+      return;
+    }
+    selectedLibraryIds = [...selectedLibraryIds, variantId];
+  }
 
   function openMetadataEditor() {
     if (!exam) return;
@@ -597,11 +724,14 @@ ${exerciseInputs}
           teacherId: e.teacher_id,
           name: e.name,
           topicTag: e.topic_tag,
+          grade: e.grade || undefined,
+          subject: e.subject || undefined,
           latexBody: e.latex_body,
           maxPoints: e.max_points,
           version: e.version || 1,
           variantKey: e.variant_key,
           isCurrent: e.is_current,
+          exerciseGroupId: e.exercise_group_id || undefined,
           isPublic: e.is_public,
           questionType: "free_text",
           penalty: 0,
@@ -611,6 +741,13 @@ ${exerciseInputs}
       }
       selectedLibraryIds = exercises.map((e) => e.id);
       initialSelectedLibraryIds = [...selectedLibraryIds];
+      activeVariantPerGroup = {};
+      for (const ex of exercises) {
+        const groupId = ex.exerciseGroupId || `name:${ex.name || "Untitled"}`;
+        if (ex.variantKey) {
+          activeVariantPerGroup = { ...activeVariantPerGroup, [groupId]: ex.variantKey };
+        }
+      }
       showLibraryConfirm = false;
       isLibraryModalOpen = true;
     } catch (err) {
@@ -946,27 +1083,69 @@ ${exerciseInputs}
         />
 
         <div class="library-picker-list">
-          {#each libraryExercises.filter((ex) => !librarySearch || (ex.name && ex.name
-                  .toLowerCase()
-                  .includes(librarySearch.toLowerCase())) || (ex.topicTag && ex.topicTag
-                  .toLowerCase()
-                  .includes(librarySearch.toLowerCase()))) as ex}
-            <label class="picker-item">
-              <input
-                type="checkbox"
-                checked={selectedLibraryIds.includes(ex.id)}
-                on:change={() => toggleLibrarySelection(ex.id)}
-              />
-              <div class="picker-info">
-                <strong>{ex.name || "Untitled"}</strong>
-                <span class="meta-row">
-                  {#if ex.topicTag}<span class="topic">{ex.topicTag}</span>{/if}
-                  {#if ex.variantKey}<span class="variant">{ex.variantKey}</span
-                    >{/if}
-                  <span class="pts">{ex.maxPoints} Pkt</span>
+          {#each filteredGroups as group}
+            {@const activeVKey = activeVariantPerGroup[group.groupId] || Array.from(group.variants.keys())[0] || "_General"}
+            {@const vMembers = group.variants.get(activeVKey) || []}
+            {@const activeMember = vMembers[0]}
+            {@const activeEx = activeMember?.ex}
+            {@const isSelected = activeEx ? selectedLibraryIds.includes(activeEx.id) : false}
+            {@const groupSelectedCount = group.allMembers.filter((m) => selectedLibraryIds.includes(m.ex.id)).length}
+            {@const score = activeEx ? (parseExerciseScore(activeEx.latexBody || "") || activeEx.maxPoints || 0) : 0}
+
+            <div class="compact-group-row" class:row-selected={groupSelectedCount > 0}>
+              <div class="row-checkbox-col">
+                {#if activeEx}
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    on:change={() => toggleGroupSelection(group, activeVKey)}
+                    title={isSelected ? "Remove from exam" : "Add to exam"}
+                  />
+                {/if}
+              </div>
+
+              <div class="row-main-col">
+                <div class="row-title-line">
+                  <strong class="group-title-text">{group.name}</strong>
+                  {#if group.topicTag}
+                    <span class="compact-topic-tag">{group.topicTag}</span>
+                  {/if}
+                  {#if groupSelectedCount > 0}
+                    <span class="selected-indicator-badge">✓ {groupSelectedCount} in exam</span>
+                  {/if}
+                </div>
+
+                {#if group.variants.size > 1}
+                  <div class="compact-variant-bar">
+                    {#each group.variants.keys() as vKey}
+                      {@const members = group.variants.get(vKey) || []}
+                      {@const hasSelected = members.some((m) => selectedLibraryIds.includes(m.ex.id))}
+                      <button
+                        type="button"
+                        class="compact-variant-pill"
+                        class:active={vKey === activeVKey}
+                        class:has-selected={hasSelected}
+                        on:click={() => selectGroupVariant(group, vKey)}
+                        title={`Switch to variant "${vKey}"`}
+                      >
+                        {#if hasSelected}
+                          <span class="v-check">✓</span>
+                        {/if}
+                        <span>{vKey}</span>
+                      </button>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+
+              <div class="row-actions-col">
+                <span class="compact-score-badge">
+                  {group.variants.size > 1 && group.minPoints !== group.maxPoints
+                    ? `${group.minPoints}-${group.maxPoints} Pkt`
+                    : `${score} Pkt`}
                 </span>
               </div>
-            </label>
+            </div>
           {/each}
         </div>
       </div>
@@ -1444,9 +1623,9 @@ ${exerciseInputs}
     background: #1e293b;
     border: 1px solid #334155;
     border-radius: 12px;
-    width: 90%;
-    max-width: 600px;
-    max-height: 80vh;
+    width: min(96vw, 1080px);
+    max-width: 1080px;
+    max-height: 88vh;
     display: flex;
     flex-direction: column;
   }
@@ -1485,39 +1664,160 @@ ${exerciseInputs}
     border: 1px solid #334155;
     color: white;
     padding: 0.625rem 1rem;
-    border-radius: 6px;
     width: 100%;
+    box-sizing: border-box;
   }
 
   .library-picker-list {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
-    max-height: 350px;
+    gap: 0.75rem;
+    max-height: min(64vh, 680px);
     overflow-y: auto;
   }
 
-  .picker-item {
+  .compact-group-row {
     display: flex;
     align-items: flex-start;
-    gap: 0.75rem;
-    background: #0f172a;
-    padding: 0.75rem;
-    border-radius: 6px;
+    gap: 0.85rem;
+    background: #1e293b;
+    padding: 0.85rem 1rem;
+    border-radius: 10px;
     border: 1px solid #334155;
     cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
   }
 
-  .picker-info {
+  .compact-group-row:hover {
+    border-color: #475569;
+    background: #223044;
+  }
+
+  .compact-group-row.row-selected {
+    border-color: #0284c7;
+    background: rgba(2, 132, 199, 0.1);
+  }
+
+  .row-checkbox-col {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .row-checkbox-col input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    margin-top: 0.2rem;
+    accent-color: #0284c7;
+  }
+
+  .row-main-col {
+    flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.25rem;
+    gap: 0.35rem;
   }
 
-  .meta-row {
+  .row-title-line {
     display: flex;
+    align-items: flex-start;
     gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .group-title-text {
+    color: #f8fafc;
+    font-weight: 600;
+    font-size: 0.98rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .compact-topic-tag {
+    font-size: 0.72rem;
+    background: #334155;
+    color: #cbd5e1;
+    padding: 0.1rem 0.45rem;
+    border-radius: 4px;
+    font-weight: 500;
+  }
+
+  .selected-indicator-badge {
+    font-size: 0.72rem;
+    background: rgba(16, 185, 129, 0.15);
+    border: 1px solid #10b981;
+    color: #34d399;
+    padding: 0.05rem 0.4rem;
+    border-radius: 4px;
+  }
+
+  .compact-variant-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    flex-wrap: wrap;
+  }
+
+  .compact-variant-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    background: #1e293b;
+    border: 1px solid #334155;
+    color: #94a3b8;
+    padding: 0.1rem 0.455rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.72rem;
+    font-weight: 500;
+    transition: all 0.15s ease;
+  }
+
+  .compact-variant-pill:hover {
+    border-color: #38bdf8;
+    color: #f8fafc;
+  }
+
+  .compact-variant-pill.active {
+    background: #0284c7;
+    border-color: #38bdf8;
+    color: white;
+    font-weight: 600;
+  }
+
+  .compact-variant-pill.has-selected {
+    border-color: #10b981;
+  }
+
+  .compact-variant-pill.active.has-selected {
+    background: #059669;
+    border-color: #34d399;
+  }
+
+  .row-actions-col {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    white-space: nowrap;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+
+  .compact-score-badge {
+    background: #0369a1;
+    color: #e0f2fe;
     font-size: 0.75rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    font-weight: 600;
+  }
+
+  .compact-group-row .selected-indicator-badge {
+    display: inline-flex;
   }
 
   .modal-footer {
