@@ -6,3 +6,4 @@
 
 ## Validation
 - Before completing any feature or fix, verify that the project builds clean without lint or bundle resolution errors.
+- Do not execute npm commands which will not terminate until the process is killed (except I explicitly tell you to).

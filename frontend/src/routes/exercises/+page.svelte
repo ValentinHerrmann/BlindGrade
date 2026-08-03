@@ -9,7 +9,7 @@
   import { parseExerciseScore } from "$lib/latex/scoreParser";
   import { get } from "svelte/store";
 
-  import LatexEditor from "$lib/components/LatexEditor.svelte";
+  import LatexEditor, { type DiffDecorationConfig, type DiffLineDecoration, type DiffWordDecoration, type DiffGapDecoration } from "$lib/components/LatexEditor.svelte";
   import LatexViewer from "$lib/components/LatexViewer.svelte";
   import { highlightLatexToHtml } from "$lib/latex/highlighter";
   import ExerciseEditorModal from "$lib/components/ExerciseEditorModal.svelte";
@@ -50,8 +50,6 @@
   let diffGroupExercises: ExerciseRecord[] = [];
   let diffLeftLatex: string = "";
   let diffRightLatex: string = "";
-  let diffLeftMode: "diff" | "edit" = "diff";
-  let diffRightMode: "diff" | "edit" = "diff";
   let isSavingDiffLeft = false;
   let isSavingDiffRight = false;
   let showDiffConfirmClose = false;
@@ -451,6 +449,196 @@
   $: sideBySideDiff = isDiffModalOpen
     ? computeSideBySideDiff(diffLeftLatex, diffRightLatex)
     : { leftLines: [], rightLines: [] };
+
+  function buildAlignedDiffDecorations(
+    sideBySide: { leftLines: DiffLine[]; rightLines: DiffLine[] },
+    leftHeights: Map<number, number>,
+    rightHeights: Map<number, number>
+  ): { leftConfig: DiffDecorationConfig; rightConfig: DiffDecorationConfig } {
+    const DEFAULT_LINE_HEIGHT_PX = 24;
+
+    const leftDecoLines: DiffLineDecoration[] = [];
+    const leftPaddings: DiffLinePaddingDecoration[] = [];
+    const leftGaps: DiffGapDecoration[] = [];
+
+    const rightDecoLines: DiffLineDecoration[] = [];
+    const rightPaddings: DiffLinePaddingDecoration[] = [];
+    const rightGaps: DiffGapDecoration[] = [];
+
+    let currentLeftDocLine = 0;
+    let currentRightDocLine = 0;
+
+    let pendingLeftGapPx = 0;
+    let pendingRightGapPx = 0;
+
+    const N = Math.max(sideBySide.leftLines.length, sideBySide.rightLines.length);
+
+    for (let i = 0; i < N; i++) {
+      const leftItem = sideBySide.leftLines[i];
+      const rightItem = sideBySide.rightLines[i];
+
+      const isLeftEmpty = !leftItem || leftItem.type === "empty";
+      const isRightEmpty = !rightItem || rightItem.type === "empty";
+
+      let hLeft = 0;
+      if (!isLeftEmpty && leftItem.lineNumber !== undefined) {
+        hLeft = leftHeights.get(leftItem.lineNumber) ?? DEFAULT_LINE_HEIGHT_PX;
+      }
+
+      let hRight = 0;
+      if (!isRightEmpty && rightItem.lineNumber !== undefined) {
+        hRight = rightHeights.get(rightItem.lineNumber) ?? DEFAULT_LINE_HEIGHT_PX;
+      }
+
+      const hTarget = Math.max(hLeft, hRight, DEFAULT_LINE_HEIGHT_PX);
+
+      // Handle Left side
+      if (isLeftEmpty) {
+        pendingLeftGapPx += hTarget;
+      } else {
+        if (pendingLeftGapPx > 0) {
+          leftGaps.push({
+            afterLineNumber: currentLeftDocLine,
+            gapPx: pendingLeftGapPx
+          });
+          pendingLeftGapPx = 0;
+        }
+        currentLeftDocLine++;
+        const lineNumber = leftItem.lineNumber ?? currentLeftDocLine;
+
+        const words: DiffWordDecoration[] = [];
+        if (leftItem.tokens && leftItem.type === "modified") {
+          let col = 0;
+          for (const token of leftItem.tokens) {
+            const tokenLen = token.text.length;
+            if (token.type !== "unchanged") {
+              words.push({
+                startCol: col,
+                endCol: col + tokenLen,
+                type: token.type
+              });
+            }
+            col += tokenLen;
+          }
+        }
+
+        leftDecoLines.push({
+          lineNumber,
+          type: leftItem.type,
+          words: words.length > 0 ? words : undefined
+        });
+
+        if (hTarget > hLeft + 0.5) {
+          leftPaddings.push({
+            lineNumber,
+            paddingPx: hTarget - hLeft
+          });
+        }
+      }
+
+      // Handle Right side
+      if (isRightEmpty) {
+        pendingRightGapPx += hTarget;
+      } else {
+        if (pendingRightGapPx > 0) {
+          rightGaps.push({
+            afterLineNumber: currentRightDocLine,
+            gapPx: pendingRightGapPx
+          });
+          pendingRightGapPx = 0;
+        }
+        currentRightDocLine++;
+        const lineNumber = rightItem.lineNumber ?? currentRightDocLine;
+
+        const words: DiffWordDecoration[] = [];
+        if (rightItem.tokens && rightItem.type === "modified") {
+          let col = 0;
+          for (const token of rightItem.tokens) {
+            const tokenLen = token.text.length;
+            if (token.type !== "unchanged") {
+              words.push({
+                startCol: col,
+                endCol: col + tokenLen,
+                type: token.type
+              });
+            }
+            col += tokenLen;
+          }
+        }
+
+        rightDecoLines.push({
+          lineNumber,
+          type: rightItem.type,
+          words: words.length > 0 ? words : undefined
+        });
+
+        if (hTarget > hRight + 0.5) {
+          rightPaddings.push({
+            lineNumber,
+            paddingPx: hTarget - hRight
+          });
+        }
+      }
+    }
+
+    if (pendingLeftGapPx > 0) {
+      leftGaps.push({
+        afterLineNumber: currentLeftDocLine,
+        gapPx: pendingLeftGapPx
+      });
+    }
+
+    if (pendingRightGapPx > 0) {
+      rightGaps.push({
+        afterLineNumber: currentRightDocLine,
+        gapPx: pendingRightGapPx
+      });
+    }
+
+    return {
+      leftConfig: { lines: leftDecoLines, paddings: leftPaddings, gaps: leftGaps },
+      rightConfig: { lines: rightDecoLines, paddings: rightPaddings, gaps: rightGaps }
+    };
+  }
+
+  let diffLeftEditor: LatexEditor | undefined;
+  let diffRightEditor: LatexEditor | undefined;
+  let isSyncingDiffScroll = false;
+
+  $: leftLineHeights = (diffLeftEditor && isDiffModalOpen && diffLeftLatex !== undefined)
+    ? diffLeftEditor.getLineHeights()
+    : new Map<number, number>();
+
+  $: rightLineHeights = (diffRightEditor && isDiffModalOpen && diffRightLatex !== undefined)
+    ? diffRightEditor.getLineHeights()
+    : new Map<number, number>();
+
+  $: alignedDiffDecorations = isDiffModalOpen
+    ? buildAlignedDiffDecorations(sideBySideDiff, leftLineHeights, rightLineHeights)
+    : null;
+
+  $: leftDiffDecorations = alignedDiffDecorations?.leftConfig ?? null;
+  $: rightDiffDecorations = alignedDiffDecorations?.rightConfig ?? null;
+
+  function handleDiffLeftScroll() {
+    if (isSyncingDiffScroll || !diffLeftEditor || !diffRightEditor) return;
+    isSyncingDiffScroll = true;
+    const { scrollTop, scrollLeft } = diffLeftEditor.getScroll();
+    diffRightEditor.setScroll(scrollTop, scrollLeft);
+    requestAnimationFrame(() => {
+      isSyncingDiffScroll = false;
+    });
+  }
+
+  function handleDiffRightScroll() {
+    if (isSyncingDiffScroll || !diffLeftEditor || !diffRightEditor) return;
+    isSyncingDiffScroll = true;
+    const { scrollTop, scrollLeft } = diffRightEditor.getScroll();
+    diffLeftEditor.setScroll(scrollTop, scrollLeft);
+    requestAnimationFrame(() => {
+      isSyncingDiffScroll = false;
+    });
+  }
 
   // Preview state
   let isPreviewLoading = false;
@@ -854,8 +1042,6 @@
     diffRightLatex = (diffGroupExercises.find((e) => e.id === diffRightId) || ex).latexBody || "";
     lastLoadedLeftId = diffLeftId;
     lastLoadedRightId = diffRightId;
-    diffLeftMode = "diff";
-    diffRightMode = "diff";
     showDiffConfirmClose = false;
     isDiffModalOpen = true;
   }
@@ -1582,24 +1768,6 @@
             <div class="diff-pane-header">
               <h4>Left: {diffLeftEx?.name || "Original"} (v{diffLeftEx?.version || 1})</h4>
               <div class="pane-controls">
-                <div class="mode-toggle">
-                  <button
-                    type="button"
-                    class="toggle-btn"
-                    class:active={diffLeftMode === "diff"}
-                    on:click={() => (diffLeftMode = "diff")}
-                  >
-                    Diff View
-                  </button>
-                  <button
-                    type="button"
-                    class="toggle-btn"
-                    class:active={diffLeftMode === "edit"}
-                    on:click={() => (diffLeftMode = "edit")}
-                  >
-                    Edit Code
-                  </button>
-                </div>
                 {#if isDiffLeftDirty}
                   <button
                     type="button"
@@ -1613,52 +1781,21 @@
               </div>
             </div>
 
-            {#if diffLeftMode === "edit"}
-              <div class="diff-editor-wrapper">
-                <LatexEditor bind:value={diffLeftLatex} rows={14} />
-              </div>
-            {:else}
-              <div class="code-diff-container">
-                {#each sideBySideDiff.leftLines as line}
-                  <div class="diff-line {line.type}">
-                    <span class="line-num">{line.lineNumber ?? ""}</span>
-                    <span class="line-content">
-                      {#if line.tokens}
-                        {#each line.tokens as token}
-                          <span class="word-token {token.type}">{@html highlightLatexToHtml(token.text)}</span>
-                        {/each}
-                      {:else}
-                        {@html highlightLatexToHtml(line.text || "")}
-                      {/if}
-                    </span>
-                  </div>
-                {/each}
-              </div>
-            {/if}
+            <div class="diff-editor-wrapper">
+              <LatexEditor
+                bind:this={diffLeftEditor}
+                bind:value={diffLeftLatex}
+                rows={16}
+                diffDecorations={leftDiffDecorations}
+                on:scroll={handleDiffLeftScroll}
+              />
+            </div>
           </div>
 
           <div class="diff-pane">
             <div class="diff-pane-header">
               <h4>Right: {diffRightEx?.name || "Compared"} (v{diffRightEx?.version || 1})</h4>
               <div class="pane-controls">
-                <div class="mode-toggle">
-                  <button
-                    type="button"
-                    class="toggle-btn"
-                    class:active={diffRightMode === "diff"}
-                    on:click={() => (diffRightMode = "diff")}
-                  >
-                    Diff View
-                  </button>
-                  <button
-                    type="button"
-                    class="toggle-btn"
-                    class:active={diffRightMode === "edit"}
-                    on:click={() => (diffRightMode = "edit")}
-                  >
-                    Edit Code
-                  </button>
-                </div>
                 {#if isDiffRightDirty}
                   <button
                     type="button"
@@ -1672,28 +1809,15 @@
               </div>
             </div>
 
-            {#if diffRightMode === "edit"}
-              <div class="diff-editor-wrapper">
-                <LatexEditor bind:value={diffRightLatex} rows={14} />
-              </div>
-            {:else}
-              <div class="code-diff-container">
-                {#each sideBySideDiff.rightLines as line}
-                  <div class="diff-line {line.type}">
-                    <span class="line-num">{line.lineNumber ?? ""}</span>
-                    <span class="line-content">
-                      {#if line.tokens}
-                        {#each line.tokens as token}
-                          <span class="word-token {token.type}">{@html highlightLatexToHtml(token.text)}</span>
-                        {/each}
-                      {:else}
-                        {@html highlightLatexToHtml(line.text || "")}
-                      {/if}
-                    </span>
-                  </div>
-                {/each}
-              </div>
-            {/if}
+            <div class="diff-editor-wrapper">
+              <LatexEditor
+                bind:this={diffRightEditor}
+                bind:value={diffRightLatex}
+                rows={16}
+                diffDecorations={rightDiffDecorations}
+                on:scroll={handleDiffRightScroll}
+              />
+            </div>
           </div>
         </div>
       </div>
@@ -2375,31 +2499,6 @@
     gap: 0.5rem;
   }
 
-  .mode-toggle {
-    display: flex;
-    background: #0f172a;
-    border: 1px solid #334155;
-    border-radius: 6px;
-    padding: 2px;
-  }
-
-  .mode-toggle .toggle-btn {
-    background: transparent;
-    border: none;
-    color: #94a3b8;
-    padding: 0.25rem 0.6rem;
-    font-size: 0.75rem;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.15s ease;
-  }
-
-  .mode-toggle .toggle-btn.active {
-    background: #38bdf8;
-    color: #0f172a;
-    font-weight: 600;
-  }
-
   .save-pane-btn {
     background: #10b981;
     color: white;
@@ -2432,103 +2531,6 @@
     margin: 0;
     color: #38bdf8;
     font-size: 0.9rem;
-  }
-
-  .code-diff-container {
-    background: #0f172a;
-    border: 1px solid #334155;
-    border-radius: 8px;
-    font-family: "Fira Code", monospace;
-    font-size: 0.85rem;
-    line-height: 1.5;
-    max-height: 450px;
-    overflow-y: auto;
-    overflow-x: auto;
-    padding: 0.5rem 0;
-  }
-
-  .diff-line {
-    display: flex;
-    min-height: 1.5rem;
-    padding: 0 0.5rem;
-    white-space: pre-wrap;
-    word-break: break-all;
-  }
-
-  .line-num {
-    display: inline-block;
-    width: 2.2rem;
-    min-width: 2.2rem;
-    color: #64748b;
-    font-size: 0.75rem;
-    user-select: none;
-    text-align: right;
-    padding-right: 0.6rem;
-    border-right: 1px solid #1e293b;
-    margin-right: 0.6rem;
-  }
-
-  .line-content {
-    flex: 1;
-  }
-
-  .diff-line.removed {
-    background: rgba(239, 68, 68, 0.2);
-    color: #fca5a5;
-  }
-
-  .diff-line.removed .line-num {
-    color: #f87171;
-    border-right-color: rgba(239, 68, 68, 0.3);
-  }
-
-  .diff-line.added {
-    background: rgba(34, 197, 94, 0.2);
-    color: #86efac;
-  }
-
-  .diff-line.added .line-num {
-    color: #4ade80;
-    border-right-color: rgba(34, 197, 94, 0.3);
-  }
-
-  .diff-line.modified {
-    background: rgba(234, 179, 8, 0.08);
-  }
-
-  .diff-line.modified .line-num {
-    color: #fbbf24;
-    border-right-color: rgba(234, 179, 8, 0.2);
-  }
-
-  .diff-line.unchanged {
-    color: #cbd5e1;
-  }
-
-  .diff-line.empty {
-    background: rgba(15, 23, 42, 0.5);
-  }
-
-  .word-token {
-    display: inline;
-    border-radius: 3px;
-    padding: 0 2px;
-  }
-
-  .word-token.removed {
-    background: rgba(239, 68, 68, 0.35);
-    color: #fca5a5;
-    text-decoration: line-through;
-  }
-
-  .word-token.added {
-    background: rgba(34, 197, 94, 0.35);
-    color: #86efac;
-    font-weight: 600;
-  }
-
-  .word-token.unchanged {
-    color: inherit;
   }
 
   .desc-text {
