@@ -796,7 +796,8 @@ ${exerciseInputs}
       </div>
     {/if}
 
-    <div class="pdf-compile-section">
+    <div class="exam-two-col">
+      <div class="pdf-compile-section">
       <h3>LaTeX Exam Compilation & Download</h3>
       <p class="desc">
         Generate printable A4 PDF exams using the Schulaufgabe template layout.
@@ -915,6 +916,7 @@ ${exerciseInputs}
           {/each}
         </ul>
       {/if}
+    </div>
     </div>
   {/if}
 </div>
@@ -1043,12 +1045,24 @@ ${exerciseInputs}
     background: #0369a1;
   }
 
+  .exam-two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    align-items: start;
+  }
+
+  @media (max-width: 1199px) {
+    .exam-two-col {
+      grid-template-columns: 1fr;
+    }
+  }
+
   .pdf-compile-section {
     background: #1e293b;
     border: 1px solid #334155;
     padding: 1.5rem;
     border-radius: 10px;
-    margin-bottom: 2rem;
   }
 
   .pdf-compile-section h3 {

@@ -1040,9 +1040,9 @@ ${exerciseInputs}
 
 <style>
   .new-exam-page {
-    max-width: 950px;
-    margin: 2rem auto;
-    padding: 0 1rem;
+    padding: 1.5rem;
+    width: 100%;
+    box-sizing: border-box;
   }
 
   h2 {
@@ -1371,12 +1371,18 @@ ${exerciseInputs}
 
   /* Compact Exercise List */
   .compact-exercise-list {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
     gap: 0.4rem;
     max-height: 480px;
     overflow-y: auto;
     padding-right: 0.35rem;
+  }
+
+  @media (max-width: 900px) {
+    .compact-exercise-list {
+      grid-template-columns: 1fr;
+    }
   }
 
   .compact-group-row {

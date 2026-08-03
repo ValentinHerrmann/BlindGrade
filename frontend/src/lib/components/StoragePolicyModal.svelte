@@ -226,7 +226,7 @@
     background: #1e293b;
     border: 1px solid #38bdf8;
     border-radius: 12px;
-    max-width: 620px;
+    max-width: 900px;
     width: 100%;
     max-height: 90vh;
     display: flex;
@@ -299,10 +299,18 @@
     margin: 0 0 0.75rem 0;
   }
 
-  .policy-options {
+  .options-grid {
     display: flex;
     flex-direction: column;
     gap: 0.6rem;
+  }
+
+  @media (min-width: 900px) {
+    .options-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.75rem;
+    }
   }
 
   .option-card {

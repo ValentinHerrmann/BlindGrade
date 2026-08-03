@@ -166,9 +166,9 @@
 
 <style>
     .admin-users-page {
-        max-width: 760px;
-        margin: 2rem auto;
-        padding: 1rem;
+        padding: 2rem;
+        width: 100%;
+        box-sizing: border-box;
     }
 
     .header h2 {
@@ -183,6 +183,7 @@
 
     .form-card,
     .state-card {
+        max-width: 720px;
         background: #1e293b;
         border: 1px solid #334155;
         border-radius: 12px;

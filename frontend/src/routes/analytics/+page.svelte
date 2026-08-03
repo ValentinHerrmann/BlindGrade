@@ -350,8 +350,9 @@ import { loadExamsEncrypted, decryptExercise, decryptScore } from '$lib/db/dbEnc
       </div>
     {/if}
 
-    <!-- Section 1: Variant Fairness & Difficulty Comparison -->
-    <div class="section-card margin-bottom">
+    <div class="analytics-sections-grid">
+      <!-- Section 1: Variant Fairness & Difficulty Comparison -->
+      <div class="section-card margin-bottom">
       <div class="section-header-row">
         <div class="section-title-group">
           <h3>🔀 Exercise Variant Difficulty & Fairness Comparison</h3>
@@ -395,7 +396,6 @@ import { loadExamsEncrypted, decryptExercise, decryptScore } from '$lib/db/dbEnc
                 <thead>
                   <tr>
                     <th>Variant Key</th>
-                    <th>Exercise Title</th>
                     <th>Max Points</th>
                     <th>Avg Score %</th>
                     <th>Status</th>
@@ -407,7 +407,6 @@ import { loadExamsEncrypted, decryptExercise, decryptScore } from '$lib/db/dbEnc
                       <td class="variant-key-cell">
                         <span class="variant-badge">{v.variantKey}</span>
                       </td>
-                      <td>{v.name}</td>
                       <td>{v.maxPoints} Pkt</td>
                       <td>
                         {#if v.avgScorePercent !== null}
@@ -526,15 +525,29 @@ import { loadExamsEncrypted, decryptExercise, decryptScore } from '$lib/db/dbEnc
         </table>
       {/if}
     </div>
+    </div>
   {/if}
 </div>
 
 <style>
   .analytics-container {
     padding: 2rem;
-    max-width: 1060px;
-    margin: 0 auto;
+    width: 100%;
+    box-sizing: border-box;
     color: #f8fafc;
+  }
+
+  .analytics-sections-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    align-items: start;
+  }
+
+  @media (max-width: 1199px) {
+    .analytics-sections-grid {
+      grid-template-columns: 1fr;
+    }
   }
 
   .analytics-header {
@@ -630,7 +643,7 @@ import { loadExamsEncrypted, decryptExercise, decryptScore } from '$lib/db/dbEnc
   }
 
   .section-card.margin-bottom {
-    margin-bottom: 2rem;
+    margin-bottom: 0;
   }
 
   .section-header-row {

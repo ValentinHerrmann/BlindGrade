@@ -13,10 +13,13 @@
   import { storagePolicyStore } from '$lib/stores/storagePolicy';
   import { api } from '$lib/api/client';
   import { examRepository } from '$lib/repositories/examRepository';
+  import { submissionRepository } from '$lib/repositories/submissionRepository';
   import { offlineQueue } from '$lib/services/offlineQueue';
+  import { goto } from '$app/navigation';
 
 
   let exams: ExamRecord[] = [];
+  let examStatsMap = new Map<string, { avgScore: number | null; count: number }>();
   let isImporting = false;
   let importStatus = '';
   let isInitializing = true;
@@ -155,6 +158,31 @@
       exams = localExams;
     }
 
+    try {
+      const allSubmissions = await submissionRepository.getAll(key);
+      const tempMap = new Map<string, { sum: number; count: number }>();
+      for (const s of allSubmissions) {
+        if (typeof s.totalScore === 'number' && !isNaN(s.totalScore)) {
+          const curr = tempMap.get(s.examId) || { sum: 0, count: 0 };
+          curr.sum += s.totalScore;
+          curr.count += 1;
+          tempMap.set(s.examId, curr);
+        }
+      }
+      const newStats = new Map<string, { avgScore: number | null; count: number }>();
+      for (const [eId, data] of tempMap.entries()) {
+        if (data.count > 0) {
+          newStats.set(eId, {
+            avgScore: Math.round((data.sum / data.count) * 10) / 10,
+            count: data.count,
+          });
+        }
+      }
+      examStatsMap = newStats;
+    } catch (e) {
+      console.warn('Could not load submission stats for dashboard:', e);
+    }
+
     for (const exam of exams) {
       if (exam.retentionUntil) {
         const check = checkRetention(exam.retentionUntil);
@@ -260,143 +288,166 @@
       <div class="import-status">{importStatus}</div>
     {/if}
 
-    <div class="kpi-grid">
-      <div class="kpi-card">
-        <span class="kpi-title">Total Exams</span>
-        <span class="kpi-value">{exams.length}</span>
+    <div class="dashboard-body">
+      <div class="kpi-sidebar">
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <span class="kpi-title">Total Exams</span>
+            <span class="kpi-value">{exams.length}</span>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-title">Configured Subjects</span>
+            <span class="kpi-value">{availableSubjects.length}</span>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-title">Grade Levels</span>
+            <span class="kpi-value">{availableGrades.length}</span>
+          </div>
+          <div class="kpi-card highlight">
+            <span class="kpi-title">Global Analytics</span>
+            <a href="/analytics" class="kpi-link">View Multi-Exam Stats →</a>
+          </div>
+        </div>
       </div>
-      <div class="kpi-card">
-        <span class="kpi-title">Configured Subjects</span>
-        <span class="kpi-value">{availableSubjects.length}</span>
-      </div>
-      <div class="kpi-card">
-        <span class="kpi-title">Grade Levels</span>
-        <span class="kpi-value">{availableGrades.length}</span>
-      </div>
-      <div class="kpi-card highlight">
-        <span class="kpi-title">Global Analytics</span>
-        <a href="/analytics" class="kpi-link">View Multi-Exam Stats →</a>
+
+      <div class="exam-main">
+        {#if expiredExam}
+          <div class="modal-overlay">
+            <div class="modal-card">
+              <h3>GDPR Retention Warning (Art. 5)</h3>
+              <p>
+                Exam <strong>{expiredExam.exam.title}</strong> passed its retention period on
+                <strong>{expiredExam.exam.retentionUntil}</strong> ({Math.abs(expiredExam.check.daysRemaining)} days ago).
+              </p>
+              <p>Would you like to extend retention by 1 year or permanently delete local project data?</p>
+              <div class="modal-actions">
+                <button class="delete-btn" on:click={handleDeleteExpiredExam}>Delete Data</button>
+                <button class="extend-btn" on:click={handleExtendRetention}>Extend Retention (+1 Year)</button>
+              </div>
+            </div>
+          </div>
+        {/if}
+
+        {#if exams.length === 0}
+          <div class="onboarding-card">
+            <div class="onboarding-icon">🎓</div>
+            <h3>Welcome to Examance!</h3>
+            <p>You don't have any exams in your workspace yet. Follow these quick steps to get started:</p>
+
+            <div class="onboarding-steps">
+              <div class="step-item">
+                <span class="step-num">1</span>
+                <div class="step-text">
+                  <strong>Create an Exam</strong>
+                  <p>Configure LaTeX template, total points, and grade thresholds.</p>
+                </div>
+              </div>
+
+              <div class="step-item">
+                <span class="step-num">2</span>
+                <div class="step-text">
+                  <strong>Link Exercises</strong>
+                  <p>Add questions from your Exercise Library or create new ones.</p>
+                </div>
+              </div>
+
+              <div class="step-item">
+                <span class="step-num">3</span>
+                <div class="step-text">
+                  <strong>Scan & Grade</strong>
+                  <p>Upload student PDFs, anonymously score, and review analytics.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="onboarding-actions">
+              <a href="/exam/new" class="create-btn">+ Create First Exam</a>
+              <label for="importFile" class="import-btn">Or Import .bgproj Archive</label>
+            </div>
+          </div>
+        {:else}
+          <div class="dashboard-filter-bar">
+            <input
+              type="text"
+              placeholder="Search exams by title, class, subject..."
+              bind:value={searchQuery}
+              class="dashboard-search-input"
+            />
+
+            {#if availableGrades.length > 0}
+              <div class="select-group">
+                <label for="dashboard-grade">Grade:</label>
+                <select id="dashboard-grade" bind:value={selectedGradeFilter}>
+                  <option value="ALL">All Grades</option>
+                  {#each availableGrades as g}
+                    <option value={g}>Grade {g}</option>
+                  {/each}
+                </select>
+              </div>
+            {/if}
+
+            {#if availableSubjects.length > 0}
+              <div class="select-group">
+                <label for="dashboard-subject">Subject:</label>
+                <select id="dashboard-subject" bind:value={selectedSubjectFilter}>
+                  <option value="ALL">All Subjects</option>
+                  {#each availableSubjects as s}
+                    <option value={s}>{s}</option>
+                  {/each}
+                </select>
+              </div>
+            {/if}
+          </div>
+
+          {#if filteredExams.length === 0}
+            <div class="empty-state">
+              <p>No exams match your search or filter criteria.</p>
+            </div>
+          {:else}
+            <div class="exams-grid">
+              {#each filteredExams as exam}
+                {@const stats = examStatsMap.get(exam.id)}
+                <div
+                  class="exam-card clickable-card"
+                  role="button"
+                  tabindex="0"
+                  on:click={() => goto(`/exam/${exam.id}`)}
+                  on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goto(`/exam/${exam.id}`); } }}
+                >
+                  <h3>{exam.title || 'Untitled Exam'}</h3>
+                  <div class="exam-tags">
+                    {#if exam.klasse}
+                      <span class="exam-tag grade-tag">Klasse {exam.klasse}</span>
+                    {/if}
+                    {#if exam.fach}
+                      <span class="exam-tag subject-tag">{exam.fach}</span>
+                    {/if}
+                    {#if exam.testart}
+                      <span class="exam-tag testart-tag">{exam.testart}</span>
+                    {/if}
+                    {#if stats?.avgScore !== undefined && stats.avgScore !== null}
+                      <span class="exam-tag avg-grade-tag">Ø {stats.avgScore} Pkt</span>
+                    {/if}
+                  </div>
+                  {#if exam.datum}
+                    <p class="date">Datum: {exam.datum}</p>
+                  {:else if exam.createdAt}
+                    <p class="date">Datum: {new Date(exam.createdAt).toLocaleDateString()}</p>
+                  {/if}
+                  {#if exam.retentionUntil}
+                    <p class="retention-info">Retention until: {exam.retentionUntil}</p>
+                  {/if}
+                  <div class="actions">
+                    <a href="/exam/{exam.id}" on:click|stopPropagation>Open Exam</a>
+                    <button class="card-delete-btn" on:click|stopPropagation={() => handleDeleteDashboardExam(exam.id, exam.title)}>Delete</button>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        {/if}
       </div>
     </div>
-
-    {#if expiredExam}
-      <div class="modal-overlay">
-        <div class="modal-card">
-          <h3>GDPR Retention Warning (Art. 5)</h3>
-          <p>
-            Exam <strong>{expiredExam.exam.title}</strong> passed its retention period on
-            <strong>{expiredExam.exam.retentionUntil}</strong> ({Math.abs(expiredExam.check.daysRemaining)} days ago).
-          </p>
-          <p>Would you like to extend retention by 1 year or permanently delete local project data?</p>
-          <div class="modal-actions">
-            <button class="delete-btn" on:click={handleDeleteExpiredExam}>Delete Data</button>
-            <button class="extend-btn" on:click={handleExtendRetention}>Extend Retention (+1 Year)</button>
-          </div>
-        </div>
-      </div>
-    {/if}
-
-    {#if exams.length === 0}
-      <div class="onboarding-card">
-        <div class="onboarding-icon">🎓</div>
-        <h3>Welcome to Examance!</h3>
-        <p>You don't have any exams in your workspace yet. Follow these quick steps to get started:</p>
-
-        <div class="onboarding-steps">
-          <div class="step-item">
-            <span class="step-num">1</span>
-            <div class="step-text">
-              <strong>Create an Exam</strong>
-              <p>Configure LaTeX template, total points, and grade thresholds.</p>
-            </div>
-          </div>
-
-          <div class="step-item">
-            <span class="step-num">2</span>
-            <div class="step-text">
-              <strong>Link Exercises</strong>
-              <p>Add questions from your Exercise Library or create new ones.</p>
-            </div>
-          </div>
-
-          <div class="step-item">
-            <span class="step-num">3</span>
-            <div class="step-text">
-              <strong>Scan & Grade</strong>
-              <p>Upload student PDFs, anonymously score, and review analytics.</p>
-            </div>
-          </div>
-        </div>
-
-        <div class="onboarding-actions">
-          <a href="/exam/new" class="create-btn">+ Create First Exam</a>
-          <label for="importFile" class="import-btn">Or Import .bgproj Archive</label>
-        </div>
-      </div>
-    {:else}
-      <div class="dashboard-filter-bar">
-        <input
-          type="text"
-          placeholder="Search exams by title, class, subject..."
-          bind:value={searchQuery}
-          class="dashboard-search-input"
-        />
-
-        {#if availableGrades.length > 0}
-          <div class="select-group">
-            <label for="dashboard-grade">Grade:</label>
-            <select id="dashboard-grade" bind:value={selectedGradeFilter}>
-              <option value="ALL">All Grades</option>
-              {#each availableGrades as g}
-                <option value={g}>Grade {g}</option>
-              {/each}
-            </select>
-          </div>
-        {/if}
-
-        {#if availableSubjects.length > 0}
-          <div class="select-group">
-            <label for="dashboard-subject">Subject:</label>
-            <select id="dashboard-subject" bind:value={selectedSubjectFilter}>
-              <option value="ALL">All Subjects</option>
-              {#each availableSubjects as s}
-                <option value={s}>{s}</option>
-              {/each}
-            </select>
-          </div>
-        {/if}
-      </div>
-
-      {#if filteredExams.length === 0}
-        <div class="empty-state">
-          <p>No exams match your search or filter criteria.</p>
-        </div>
-      {:else}
-        <div class="exams-grid">
-          {#each filteredExams as exam}
-            <div class="exam-card">
-              <h3>{exam.title}</h3>
-              <div class="exam-tags">
-                {#if exam.klasse}
-                  <span class="exam-tag grade-tag">Klasse {exam.klasse}</span>
-                {/if}
-                {#if exam.fach}
-                  <span class="exam-tag subject-tag">{exam.fach}</span>
-                {/if}
-                {#if exam.testart}
-                  <span class="exam-tag testart-tag">{exam.testart}</span>
-                {/if}
-              </div>
-              <p class="date">Retention until: {exam.retentionUntil}</p>
-              <div class="actions">
-                <a href="/exam/{exam.id}">Open Exam</a>
-                <button class="card-delete-btn" on:click={() => handleDeleteDashboardExam(exam.id, exam.title)}>Delete</button>
-              </div>
-            </div>
-          {/each}
-        </div>
-      {/if}
-    {/if}
   {/if}
 </div>
 
@@ -404,9 +455,37 @@
 
 <style>
   .dashboard {
-    padding: 2rem;
-    max-width: 1000px;
-    margin: 0 auto;
+    padding: 1.5rem;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .dashboard-body {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 1.5rem;
+    align-items: start;
+  }
+
+  .kpi-sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .exam-main {
+    min-width: 0;
+  }
+
+  @media (max-width: 1199px) {
+    .dashboard-body {
+      grid-template-columns: 1fr;
+    }
+    .kpi-sidebar .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 0.75rem;
+    }
   }
 
   .header-subtitle {
@@ -416,10 +495,9 @@
   }
 
   .kpi-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 1rem;
-    margin-bottom: 2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
   }
 
   .kpi-card {
@@ -728,6 +806,12 @@
     color: #e2e8f0;
   }
 
+  .avg-grade-tag {
+    background: #0284c7;
+    color: #e0f2fe;
+    font-weight: 600;
+  }
+
   .exams-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -741,6 +825,16 @@
     border: 1px solid #334155;
   }
 
+  .exam-card.clickable-card {
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+
+  .exam-card.clickable-card:hover {
+    border-color: #38bdf8;
+    background: #24334a;
+  }
+
   .exam-card h3 {
     margin: 0 0 0.5rem 0;
     color: #38bdf8;
@@ -748,7 +842,13 @@
 
   .exam-card .date {
     font-size: 0.875rem;
-    color: #94a3b8;
+    color: #cbd5e1;
+    margin-bottom: 0.25rem;
+  }
+
+  .exam-card .retention-info {
+    font-size: 0.75rem;
+    color: #64748b;
     margin-bottom: 1rem;
   }
 

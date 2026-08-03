@@ -21,6 +21,7 @@
   let selectedGrade: string = "ALL";
   let selectedSubject: string = "ALL";
   let searchQuery: string = "";
+  let filterCollapsed = true;
   let isLoading = false;
   let errorMsg = "";
   let isLocalFallback = false;
@@ -681,6 +682,7 @@
   });
 
   // Grouped view: filter then group
+  $: allGroups = groupExercises(exercises);
   $: filteredGroups = groupExercises(filteredExercises);
 
   onMount(() => {
@@ -1216,78 +1218,83 @@
     <div class="error-banner">{errorMsg}</div>
   {/if}
 
-  <div class="filter-bar">
-    <div class="search-box">
-      <input
-        type="text"
-        placeholder="Search exercises by name, topic, grade, subject, or LaTeX content..."
-        bind:value={searchQuery}
-      />
-    </div>
+  <button class="filter-toggle-btn" on:click={() => (filterCollapsed = !filterCollapsed)}>
+    {filterCollapsed ? '▼ Show Filters' : '▲ Hide Filters'}
+  </button>
 
-    <div class="filter-selects">
-      {#if availableGrades.length > 0}
-        <div class="select-group">
-          <label for="grade-select">Grade:</label>
-          <select id="grade-select" bind:value={selectedGrade}>
-            <option value="ALL">All Grades</option>
-            {#each availableGrades as g}
-              <option value={g}>Grade {g}</option>
-            {/each}
-          </select>
-        </div>
-      {/if}
+  <div class="library-layout">
+    <div class="filter-sidebar" class:collapsed={filterCollapsed}>
+      <div class="search-box">
+        <input
+          type="text"
+          placeholder="Search exercises by name, topic, grade, subject, or LaTeX content..."
+          bind:value={searchQuery}
+        />
+      </div>
 
-      {#if availableSubjects.length > 0}
-        <div class="select-group">
-          <label for="subject-select">Subject:</label>
-          <select id="subject-select" bind:value={selectedSubject}>
-            <option value="ALL">All Subjects</option>
-            {#each availableSubjects as s}
-              <option value={s}>{s}</option>
-            {/each}
-          </select>
-        </div>
-      {/if}
-    </div>
+      <div class="filter-selects">
+        {#if availableGrades.length > 0}
+          <div class="select-group">
+            <label for="grade-select">Grade:</label>
+            <select id="grade-select" bind:value={selectedGrade}>
+              <option value="ALL">All Grades</option>
+              {#each availableGrades as g}
+                <option value={g}>Grade {g}</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
 
-    <div class="topic-pills">
-      <button
-        class="pill"
-        class:active={selectedTopic === "ALL"}
-        on:click={() => (selectedTopic = "ALL")}
-      >
-        All Topics ({filteredGroups.length})
-      </button>
-      {#each availableTopics as topic}
-        {@const groupCount = filteredGroups.filter((g) => g.topicTag === topic).length}
+        {#if availableSubjects.length > 0}
+          <div class="select-group">
+            <label for="subject-select">Subject:</label>
+            <select id="subject-select" bind:value={selectedSubject}>
+              <option value="ALL">All Subjects</option>
+              {#each availableSubjects as s}
+                <option value={s}>{s}</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
+      </div>
+
+      <div class="topic-pills">
         <button
           class="pill"
-          class:active={selectedTopic === topic}
-          on:click={() => (selectedTopic = topic)}
+          class:active={selectedTopic === "ALL"}
+          on:click={() => (selectedTopic = "ALL")}
         >
-          {topic} ({groupCount})
+          All Topics ({allGroups.length})
         </button>
-      {/each}
+        {#each availableTopics as topic}
+          {@const groupCount = allGroups.filter((g) => g.topicTag === topic).length}
+          <button
+            class="pill"
+            class:active={selectedTopic === topic}
+            on:click={() => (selectedTopic = topic)}
+          >
+            {topic} ({groupCount})
+          </button>
+        {/each}
+      </div>
     </div>
-  </div>
 
-  {#if isLoading}
-    <div class="loading is-loading">Loading exercise library...</div>
-  {:else if filteredGroups.length === 0}
-    <div class="empty-state">
-      <p>No exercises found matching your criteria.</p>
-      <button class="create-btn" on:click={openCreateModal}
-        >Create First Exercise</button
-      >
-    </div>
-  {:else}
-    <div class="exercise-group-list">
-      {#each filteredGroups as group}
-        {@const rep = getGroupRepresentative(group)}
-        {@const variantCount = group.variants.size}
-        {@const isExpanded = !!expandedGroups[group.groupId]}
-        <div class="exercise-group-card">
+    {#if isLoading}
+      <div class="loading is-loading">Loading exercise library...</div>
+    {:else if filteredGroups.length === 0}
+      <div class="empty-state">
+        <p>No exercises found matching your criteria.</p>
+        <button class="create-btn" on:click={openCreateModal}
+          >Create First Exercise</button
+        >
+      </div>
+    {:else}
+      <div class="exercise-group-list">
+        {#each filteredGroups as group}
+          {@const rep = getGroupRepresentative(group)}
+          {@const variantCount = group.variants.size}
+          {@const isExpanded = !!expandedGroups[group.groupId]}
+          <div class="exercise-group-card">
           <!-- ── Group Header (always visible) ── -->
           <div
             class="group-header"
@@ -1318,13 +1325,13 @@
                 <button
                   class="group-action-btn edit-group-btn"
                   title="Edit Group Metadata (Name, Topic Tag, Grade, Subject)"
+                  aria-label="Edit Group Metadata"
                   on:click|stopPropagation={() => openGroupModal(group)}
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
                     <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                   </svg>
-                  <span>Edit Group</span>
                 </button>
               </div>
             </div>
@@ -1483,6 +1490,7 @@
       {/each}
     </div>
   {/if}
+  </div>
 </div>
 
 {#if isVariantModalOpen && variantBaseEx}
@@ -1841,9 +1849,9 @@
 
 <style>
   .exercise-library-page {
-    max-width: 1100px;
-    margin: 2rem auto;
-    padding: 0 1rem;
+    padding: 1.5rem;
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .page-header {
@@ -1878,11 +1886,50 @@
     background: #0369a1;
   }
 
-  .filter-bar {
+  .filter-sidebar {
     display: flex;
     flex-direction: column;
     gap: 1rem;
-    margin-bottom: 2rem;
+    position: sticky;
+    top: 0.5rem;
+  }
+
+  .library-layout {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: 1.5rem;
+    align-items: start;
+  }
+
+  .filter-toggle-btn {
+    display: none;
+    width: 100%;
+    background: #1e293b;
+    border: 1px solid #334155;
+    color: #f8fafc;
+    padding: 0.625rem 1rem;
+    border-radius: 6px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-bottom: 0.5rem;
+  }
+
+  @media (max-width: 1199px) {
+    .library-layout {
+      grid-template-columns: 1fr;
+    }
+    .filter-sidebar {
+      position: static;
+    }
+  }
+
+  @media (max-width: 767px) {
+    .filter-toggle-btn {
+      display: block;
+    }
+    .filter-sidebar.collapsed {
+      display: none;
+    }
   }
 
   .search-box input {
@@ -1897,8 +1944,9 @@
 
   .topic-pills {
     display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
+    flex-direction: column;
+    gap: 0.375rem;
+    width: 100%;
   }
 
   .pill {
@@ -1909,6 +1957,9 @@
     border-radius: 16px;
     cursor: pointer;
     font-size: 0.85rem;
+    width: 100%;
+    text-align: left;
+    box-sizing: border-box;
   }
 
   .pill.active {
@@ -1950,10 +2001,14 @@
   .group-title-row {
     flex: 1;
     min-width: 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
   }
 
   .group-title-row h3 {
-    margin: 0 0 0.5rem 0;
+    margin: 0;
     color: #38bdf8;
     font-size: 1.1rem;
   }
@@ -2418,7 +2473,7 @@
   }
 
   .large-modal {
-    max-width: 1000px;
+    max-width: 1400px;
     max-height: 95vh;
   }
 

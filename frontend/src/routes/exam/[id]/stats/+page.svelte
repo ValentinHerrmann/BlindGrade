@@ -114,9 +114,9 @@
 
 <style>
   .stats-page {
-    max-width: 900px;
-    margin: 2rem auto;
-    padding: 1rem;
+    padding: 1.5rem;
+    width: 100%;
+    box-sizing: border-box;
   }
 
   h2 { color: #38bdf8; }
@@ -159,7 +159,7 @@
     display: flex;
     justify-content: space-around;
     align-items: flex-end;
-    height: 180px;
+    height: 280px;
     margin-top: 1rem;
   }
 

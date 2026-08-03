@@ -223,9 +223,9 @@
 
 <style>
   .settings-page {
-    max-width: 900px;
-    margin: 2rem auto;
-    padding: 1rem;
+    padding: 2rem;
+    width: 100%;
+    box-sizing: border-box;
   }
 
   h2 {
@@ -250,9 +250,12 @@
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
+    width: 100%;
   }
 
   .option-card {
+    width: 100%;
+    box-sizing: border-box;
     display: flex;
     gap: 0.75rem;
     align-items: flex-start;
