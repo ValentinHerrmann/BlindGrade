@@ -38,6 +38,11 @@
   let deleteUsageInfo: { examCount: number; exams: { id: string; title: string; datum: string | null }[] } | null = null;
   let isDeleteLoading = false;
 
+  // Regroup modal state
+  let isRegroupModalOpen = false;
+  let regroupingExercise: ExerciseRecord | null = null;
+  let regroupTargetGroupId: string = "";
+
   // Diff modal state
   let isDiffModalOpen = false;
   let diffLeftId: string = "";
@@ -583,6 +588,58 @@
     variantTopicTag !== initialVariantTopicTag ||
     variantLatexBody !== initialVariantLatexBody;
 
+  function openRegroupModal(ex: ExerciseRecord) {
+    regroupingExercise = ex;
+    regroupTargetGroupId = "NEW";
+    isRegroupModalOpen = true;
+  }
+
+  async function handleSaveRegroup() {
+    if (!regroupingExercise) return;
+    
+    let targetGroupId = regroupTargetGroupId;
+    let targetName = regroupingExercise.name;
+
+    if (targetGroupId === "NEW") {
+      targetGroupId = crypto.randomUUID();
+    } else {
+      const targetGroup = groupExercises(exercises).find(g => g.groupId === targetGroupId);
+      if (targetGroup) {
+        targetName = targetGroup.name;
+        
+        const collision = targetGroup.allMembers.find(m => m.ex.variantKey === regroupingExercise!.variantKey);
+        if (collision) {
+          regroupingExercise.variantKey = `${regroupingExercise.variantKey} (2)`;
+        }
+      }
+    }
+
+    const updatedEx = { 
+      ...regroupingExercise, 
+      exerciseGroupId: targetGroupId,
+      name: targetName
+    };
+
+    try {
+      const key = get(sessionStore).sessionKey;
+      await saveExerciseEncrypted(updatedEx, key);
+
+      if ($storagePolicyStore.storageMode !== "all-local") {
+        await api.patch(`/exercises/${updatedEx.id}`, {
+          exercise_group_id: updatedEx.exerciseGroupId,
+          name: updatedEx.name,
+          variant_key: updatedEx.variantKey || null
+        });
+      }
+      
+      isRegroupModalOpen = false;
+      regroupingExercise = null;
+      await loadExercises();
+    } catch (err: any) {
+      alert(`Failed to regroup: ${err.message}`);
+    }
+  }
+
   async function openDeleteModal(ex: ExerciseRecord) {
     deletingExercise = ex;
     deleteUsageInfo = null;
@@ -1043,6 +1100,19 @@
                           <span>Diff</span>
                         </button>
                         <button
+                          class="action-btn regroup-btn"
+                          title="Re-group exercise"
+                          on:click={() => openRegroupModal(member.ex)}
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M14 4h6v6"></path>
+                            <path d="M10 20H4v-6"></path>
+                            <path d="M20 4L14 10"></path>
+                            <path d="M4 20l6-6"></path>
+                          </svg>
+                          <span>Regroup</span>
+                        </button>
+                        <button
                           class="action-btn delete-btn"
                           title="Delete exercise"
                           on:click={() => openDeleteModal(member.ex)}
@@ -1188,6 +1258,47 @@
   on:close={() => (isEditorOpen = false)}
   on:save={handleExerciseSaved}
 />
+
+<!-- RE-GROUP MODAL -->
+{#if isRegroupModalOpen && regroupingExercise}
+  <div
+    class="modal-backdrop"
+    on:click|self={() => (isRegroupModalOpen = false)}
+    on:keydown|self={(e) => e.key === "Escape" && (isRegroupModalOpen = false)}
+    tabindex="-1"
+    role="dialog"
+  >
+    <div class="modal-content small-modal">
+      <div class="modal-header">
+        <h3>Re-group Exercise</h3>
+        <button class="close-btn" on:click={() => (isRegroupModalOpen = false)}>✕</button>
+      </div>
+
+      <div class="modal-body">
+        <p style="margin-top: 0; margin-bottom: 1.25rem; color: #e2e8f0;">
+          Move <strong>{regroupingExercise.name}</strong> to a different variant group.
+        </p>
+        
+        <div class="form-group">
+          <label for="targetGroup">Target Group</label>
+          <select id="targetGroup" bind:value={regroupTargetGroupId}>
+            <option value="NEW">+ Create New Group</option>
+            {#each groupExercises(exercises) as group}
+              {#if group.groupId !== regroupingExercise.exerciseGroupId}
+                <option value={group.groupId}>{group.name}</option>
+              {/if}
+            {/each}
+          </select>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="cancel-btn" on:click={() => (isRegroupModalOpen = false)}>Cancel</button>
+        <button class="save-btn" on:click={handleSaveRegroup}>Move</button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 {#if isDeleteModalOpen && deletingExercise}
   <div
@@ -1899,7 +2010,8 @@
   }
 
   input,
-  textarea {
+  textarea,
+  select {
     padding: 0.625rem;
     background: #0f172a;
     border: 1px solid #334155;
