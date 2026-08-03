@@ -3,10 +3,15 @@ from __future__ import annotations
 
 import uuid
 
+from typing import TYPE_CHECKING
+
 from sqlalchemy import Enum, Float, ForeignKey, Integer, JSON, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+if TYPE_CHECKING:
+    from app.models.exercise_group import ExerciseGroup
 
 
 class Exercise(Base):
@@ -31,6 +36,7 @@ class Exercise(Base):
         ForeignKey("exercise_groups.id", ondelete="SET NULL"), nullable=True, index=True
     )
     variant_key: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    group: Mapped[ExerciseGroup | None] = relationship("ExerciseGroup", back_populates="exercises")
     is_public: Mapped[bool] = mapped_column(nullable=False, default=False, server_default="false")
     is_current: Mapped[bool] = mapped_column(nullable=False, default=True)
     question_type: Mapped[str] = mapped_column(

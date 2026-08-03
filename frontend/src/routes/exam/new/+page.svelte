@@ -76,6 +76,8 @@
     groupId: string;
     name: string;
     topicTag: string;
+    grade?: string;
+    subject?: string;
     maxPoints: number;
     minPoints: number;
     variants: Map<string, VariantMember[]>;
@@ -179,6 +181,8 @@ Frage hier eingeben... \\BE
 
       const name = currentMembers[0]?.name || "Untitled";
       const topicTag = currentMembers[0]?.topicTag || "_General";
+      const grade = currentMembers[0]?.grade;
+      const subject = currentMembers[0]?.subject;
 
       const variants = new Map<string, VariantMember[]>();
       for (const ex of currentMembers) {
@@ -217,6 +221,8 @@ Frage hier eingeben... \\BE
         groupId,
         name,
         topicTag,
+        grade,
+        subject,
         maxPoints,
         minPoints,
         variants: sortedVariants,

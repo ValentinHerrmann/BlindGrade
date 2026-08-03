@@ -48,9 +48,14 @@
   let previewSolutionPdfUrl: string | null = null;
   let showAngabePreview = true;
   let showLoesungPreview = false;
+  let showLatexPanel = true;
   $: hasAnyPreview = showAngabePreview || showLoesungPreview;
   let isSaving = false;
   let errorMsg = "";
+
+  function handleToggleLatex() {
+    showLatexPanel = !showLatexPanel;
+  }
 
   // Track initialization on isOpen or exercise props change
   let lastOpenState = false;
@@ -116,10 +121,12 @@
   });
 
   $: isDirty =
-    editorName !== initialName ||
-    editorTopicTag !== initialTopicTag ||
-    editorGrade !== initialGrade ||
-    editorSubject !== initialSubject ||
+    (editingExercise || isCreatingVersion
+      ? false
+      : editorName !== initialName ||
+        editorTopicTag !== initialTopicTag ||
+        editorGrade !== initialGrade ||
+        editorSubject !== initialSubject) ||
     editorVariantKey !== initialVariantKey ||
     editorLatexBody !== initialLatexBody;
 
@@ -288,6 +295,24 @@
 
       await saveExerciseEncrypted(record, key);
 
+      // If exercise belongs to a group, cascade group metadata updates (name, topicTag, grade, subject) to all sister exercises locally
+      if (record.exerciseGroupId) {
+        const allLocal = await loadExercisesEncrypted(key);
+        for (const sister of allLocal) {
+          if (sister.exerciseGroupId === record.exerciseGroupId && sister.id !== record.id) {
+            const updatedSister: ExerciseRecord = {
+              ...sister,
+              name: record.name,
+              topicTag: record.topicTag,
+              grade: record.grade,
+              subject: record.subject,
+              updatedAt: new Date().toISOString(),
+            };
+            await saveExerciseEncrypted(updatedSister, key);
+          }
+        }
+      }
+
       if ($isAuthenticated && $storagePolicyStore.storageMode !== "all-local") {
         try {
           if (editingExercise) {
@@ -341,110 +366,156 @@
       aria-labelledby="exercise-editor-title"
     >
       <div class="modal-header">
-        <h3 id="exercise-editor-title">
-          {isCreatingVersion
-            ? `New Version: ${editorName}`
-            : editingExercise
-              ? `Edit Exercise: ${editorName}`
-              : "Create New Exercise"}
-        </h3>
-        <button type="button" class="close-btn" on:click={requestClose}>✕</button>
-      </div>
+        <div class="modal-header-top">
+          <div class="modal-title-group">
+            <h3 id="exercise-editor-title">
+              {isCreatingVersion
+                ? `New Version: ${editorName}`
+                : editingExercise
+                  ? `Edit Exercise: ${editorName}`
+                  : "Create New Exercise"}
+            </h3>
+            {#if isCreatingVersion}
+              <span class="version-badge">v{(versionBaseEx?.version || 1) + 1}</span>
+            {/if}
+          </div>
+          <button type="button" class="close-btn" on:click={requestClose}>✕</button>
+        </div>
 
-      {#if isCreatingVersion}
-        <div class="live-notice">
-          ℹ️ Creating new version v{(versionBaseEx?.version || 1) + 1}. The previous version will be preserved.
+        <div class="modal-header-meta">
+          {#if editingExercise || isCreatingVersion}
+            <div class="hdr-group-info">
+              <span class="hdr-label">Exercise Group:</span>
+              <strong class="hdr-name">{editorName}</strong>
+              <span class="hdr-pill">🏷️ {editorTopicTag}</span>
+              {#if editorGrade}
+                <span class="hdr-pill">🎓 Grade {editorGrade}</span>
+              {/if}
+              {#if editorSubject}
+                <span class="hdr-pill">📚 {editorSubject}</span>
+              {/if}
+            </div>
+
+            <div class="hdr-field">
+              <label for="editorVariantKey">Variant Key:</label>
+              <input
+                id="editorVariantKey"
+                type="text"
+                bind:value={editorVariantKey}
+                placeholder="e.g. Moebel, Fahrzeug"
+              />
+            </div>
+          {:else}
+            <div class="hdr-form-grid">
+              <div class="hdr-field">
+                <label for="editorName">Name *</label>
+                <input
+                  id="editorName"
+                  type="text"
+                  bind:value={editorName}
+                  required
+                  placeholder="Group Name"
+                />
+              </div>
+
+              <div class="hdr-field">
+                <label for="editorTopic">Topic *</label>
+                <input
+                  id="editorTopic"
+                  type="text"
+                  bind:value={editorTopicTag}
+                  placeholder="_Vererbung"
+                  required
+                />
+              </div>
+
+              <div class="hdr-field">
+                <label for="editorGrade">Grade</label>
+                <input
+                  id="editorGrade"
+                  type="text"
+                  bind:value={editorGrade}
+                  placeholder="e.g. 10"
+                />
+              </div>
+
+              <div class="hdr-field">
+                <label for="editorSubject">Subject</label>
+                <input
+                  id="editorSubject"
+                  type="text"
+                  bind:value={editorSubject}
+                  placeholder="e.g. Informatik"
+                />
+              </div>
+
+              <div class="hdr-field">
+                <label for="editorVariantKey">Variant Key</label>
+                <input
+                  id="editorVariantKey"
+                  type="text"
+                  bind:value={editorVariantKey}
+                  placeholder="e.g. Moebel"
+                />
+              </div>
+            </div>
+          {/if}
         </div>
-      {:else if editingExercise}
-        <div class="live-notice">
-          ℹ️ Editing this exercise will live-update globally across all exams referencing it.
-        </div>
-      {/if}
+      </div>
 
       {#if errorMsg}
         <div class="error-banner">{errorMsg}</div>
       {/if}
 
       <div class="modal-body">
-        <div class="editor-column">
-          <div class="form-grid">
-            <div class="form-group">
-              <label for="editorName">Exercise Name</label>
-              <input
-                id="editorName"
-                type="text"
-                bind:value={editorName}
-                required
-              />
-            </div>
-
-            <div class="form-group">
-              <label for="editorTopic">Topic Tag</label>
-              <input
-                id="editorTopic"
-                type="text"
-                bind:value={editorTopicTag}
-                placeholder="_Vererbung"
-                required
-              />
-            </div>
-
-            <div class="form-group">
-              <label for="editorGrade">Grade / Klasse</label>
-              <input
-                id="editorGrade"
-                type="text"
-                bind:value={editorGrade}
-                placeholder="e.g. 10, 10a, 12"
-              />
-            </div>
-
-            <div class="form-group">
-              <label for="editorSubject">Subject / Fach</label>
-              <input
-                id="editorSubject"
-                type="text"
-                bind:value={editorSubject}
-                placeholder="e.g. Informatik, Mathematik"
-              />
-            </div>
-
-            <div class="form-group full-width">
-              <label for="editorVariantKey">Variant Key (optional)</label>
-              <input
-                id="editorVariantKey"
-                type="text"
-                bind:value={editorVariantKey}
-                placeholder="e.g. Moebel, Fahrzeug, Wildtier (leave empty for default)"
-              />
-            </div>
-          </div>
-
-          <div class="form-group latex-editor-group">
-            <div class="label-row">
-              <label for="editorBody"
-                >LaTeX Body (\\begin&#123;Aufgabe&#125;...)</label
-              >
-              <span class="score-indicator">
-                Auto-Score: <strong
-                  >{parseExerciseScore(editorLatexBody)} Pkt</strong
-                >
-              </span>
-            </div>
-            <LatexEditor bind:value={editorLatexBody} rows={12} />
-          </div>
-
-          <div class="editor-actions-row">
+        <div
+          class="editor-column"
+          class:expanded={showLatexPanel}
+          class:collapsed={!showLatexPanel}
+        >
+          {#if showLatexPanel}
             <button
               type="button"
-              class="preview-btn"
-              class:is-loading={isPreviewLoading}
-              on:click={handlePreviewExercise}
-              disabled={isPreviewLoading}
+              class="panel-header-bar"
+              on:click={handleToggleLatex}
+              title="Click to collapse LaTeX Code Panel"
             >
-              {isPreviewLoading ? "Compiling Previews..." : "🔍 Live Preview PDF"}
+              <div class="panel-header-left">
+                <span class="panel-title">💻 LaTeX Source Code</span>
+                <span class="score-indicator-badge">
+                  Auto-Score: <strong>{parseExerciseScore(editorLatexBody)} Pkt</strong>
+                </span>
+              </div>
+              <div class="panel-header-right">
+                <button
+                  type="button"
+                  class="preview-btn-inline"
+                  class:is-loading={isPreviewLoading}
+                  on:click|stopPropagation={handlePreviewExercise}
+                  disabled={isPreviewLoading}
+                  title="Compile & preview exercise PDF"
+                >
+                  {isPreviewLoading ? "Compiling..." : "🔍 Live Preview PDF"}
+                </button>
+                <span class="header-icon">›</span>
+              </div>
             </button>
-          </div>
+
+            <div class="form-group latex-editor-group">
+              <LatexEditor bind:value={editorLatexBody} rows={12} />
+            </div>
+          {:else}
+            <button
+              type="button"
+              class="vertical-latex-strip"
+              on:click={handleToggleLatex}
+              title="Click to expand LaTeX Code Panel"
+            >
+              <span class="strip-icon">›</span>
+              <span class="strip-emoji">💻</span>
+              <span class="strip-title">LaTeX Source Code ({parseExerciseScore(editorLatexBody)} Pkt)</span>
+            </button>
+          {/if}
         </div>
 
         <DualPdfPreview
@@ -520,16 +591,40 @@
 
   .modal-header {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 1.25rem 1.5rem;
+    flex-direction: column;
+    gap: 0.65rem;
+    padding: 1rem 1.25rem;
     border-bottom: 1px solid #334155;
     flex-shrink: 0;
+    background: #1e293b;
+  }
+
+  .modal-header-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+  }
+
+  .modal-title-group {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+  }
+
+  .version-badge {
+    background: rgba(56, 189, 248, 0.15);
+    color: #38bdf8;
+    border: 1px solid rgba(56, 189, 248, 0.3);
+    font-size: 0.75rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    font-weight: 600;
   }
 
   .modal-header h3 {
     margin: 0;
-    font-size: 1.2rem;
+    font-size: 1.15rem;
     color: #f1f5f9;
   }
 
@@ -548,13 +643,77 @@
     color: #f1f5f9;
   }
 
-  .live-notice {
-    background: rgba(56, 189, 248, 0.1);
-    border-left: 4px solid #38bdf8;
-    color: #38bdf8;
-    padding: 0.75rem 1.5rem;
+  .modal-header-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    flex-wrap: wrap;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+  }
+
+  .hdr-group-info {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    flex-wrap: wrap;
     font-size: 0.85rem;
-    flex-shrink: 0;
+  }
+
+  .hdr-label {
+    color: #94a3b8;
+    font-size: 0.8rem;
+  }
+
+  .hdr-name {
+    color: #f1f5f9;
+    font-weight: 600;
+  }
+
+  .hdr-pill {
+    background: #1e293b;
+    border: 1px solid #334155;
+    color: #cbd5e1;
+    font-size: 0.75rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+  }
+
+  .hdr-form-grid {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .hdr-field {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.8rem;
+  }
+
+  .hdr-field label {
+    color: #94a3b8;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .hdr-field input {
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 4px;
+    color: #f1f5f9;
+    padding: 0.3rem 0.5rem;
+    font-size: 0.825rem;
+  }
+
+  .hdr-field input:focus {
+    outline: none;
+    border-color: #38bdf8;
   }
 
   .error-banner {
@@ -588,14 +747,172 @@
   }
 
   .editor-column {
-    flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 8px;
     height: 100%;
     min-height: 0;
-    min-width: 0;
     overflow: hidden;
+    transition: all 0.2s ease;
+  }
+
+  .editor-column.expanded {
+    flex: 1;
+    min-width: 0;
+    padding: 0;
+    gap: 0;
+  }
+
+  .editor-column.collapsed {
+    width: 38px;
+    flex: 0 0 38px;
+    min-width: 38px;
+    padding: 0;
+  }
+
+  .panel-header-bar {
+    background: #1e293b;
+    border: none;
+    border-bottom: 1px solid #334155;
+    padding: 0.5rem 0.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    flex-shrink: 0;
+    width: 100%;
+    box-sizing: border-box;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.15s ease;
+  }
+
+  .panel-header-bar:hover {
+    background: #334155;
+  }
+
+  .panel-header-bar:hover .header-icon {
+    color: #38bdf8;
+  }
+
+  .header-icon {
+    font-size: 1rem;
+    font-weight: bold;
+    color: #94a3b8;
+    transition: color 0.15s ease;
+    flex-shrink: 0;
+  }
+
+  .panel-header-left {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+
+  .panel-title {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #f1f5f9;
+    white-space: nowrap;
+  }
+
+  .score-indicator-badge {
+    font-size: 0.75rem;
+    color: #38bdf8;
+    background: rgba(56, 189, 248, 0.1);
+    border: 1px solid rgba(56, 189, 248, 0.2);
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    white-space: nowrap;
+  }
+
+  .score-indicator-badge strong {
+    color: #38bdf8;
+  }
+
+  .panel-header-right {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+  }
+
+  .preview-btn-inline {
+    background: #0284c7;
+    color: #ffffff;
+    border: none;
+    padding: 0.35rem 0.75rem;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease;
+    flex-shrink: 0;
+  }
+
+  .preview-btn-inline:hover:not(:disabled) {
+    background: #0369a1;
+  }
+
+  .vertical-latex-strip {
+    width: 100%;
+    height: 100%;
+    background: #0f172a;
+    border: none;
+    color: #94a3b8;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0.75rem 0.2rem;
+    gap: 1rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .vertical-latex-strip:hover {
+    background: #1e293b;
+    color: #38bdf8;
+  }
+
+  .vertical-latex-strip .strip-icon {
+    font-size: 0.9rem;
+    font-weight: bold;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 4px;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .vertical-latex-strip:hover .strip-icon {
+    background: #0284c7;
+    color: #ffffff;
+    border-color: #38bdf8;
+  }
+
+  .vertical-latex-strip .strip-emoji {
+    font-size: 0.95rem;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+
+  .vertical-latex-strip .strip-title {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    font-size: 0.8rem;
+    font-weight: 600;
+    white-space: nowrap;
+    letter-spacing: 0.5px;
   }
 
   .form-group.latex-editor-group {
@@ -604,95 +921,13 @@
     flex: 1;
     min-height: 0;
     overflow: hidden;
-  }
-
-  .form-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 1rem;
+    padding: 0.5rem;
   }
 
   .form-group {
     display: flex;
     flex-direction: column;
     gap: 0.4rem;
-  }
-
-  .form-group label {
-    font-size: 0.85rem;
-    font-weight: 600;
-    color: #94a3b8;
-  }
-
-  .form-group input {
-    background: #0f172a;
-    border: 1px solid #334155;
-    border-radius: 6px;
-    padding: 0.6rem 0.8rem;
-    color: #f1f5f9;
-    font-size: 0.9rem;
-  }
-
-  .form-group input:focus {
-    outline: none;
-    border-color: #38bdf8;
-  }
-
-  .label-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-
-  .score-indicator {
-    font-size: 0.8rem;
-    color: #94a3b8;
-  }
-
-  .score-indicator strong {
-    color: #38bdf8;
-  }
-
-  .editor-actions-row {
-    display: flex;
-    justify-content: flex-end;
-  }
-
-  .preview-btn {
-    background: #334155;
-    color: #38bdf8;
-    border: 1px solid #475569;
-    padding: 0.5rem 1rem;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 0.85rem;
-    font-weight: 600;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-  }
-
-  .preview-btn:hover:not(:disabled) {
-    background: #475569;
-  }
-
-  .preview-box {
-    background: #0f172a;
-    border: 1px solid #334155;
-    border-radius: 8px;
-    padding: 1rem;
-    margin-top: 0.5rem;
-  }
-
-  .preview-box h4 {
-    margin: 0 0 0.75rem 0;
-    font-size: 0.9rem;
-    color: #94a3b8;
-  }
-
-  .preview-box iframe {
-    border: none;
-    border-radius: 4px;
   }
 
   .modal-footer {

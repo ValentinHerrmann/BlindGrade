@@ -4,10 +4,15 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
+from typing import TYPE_CHECKING
+
 from sqlalchemy import DateTime, ForeignKey, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+if TYPE_CHECKING:
+    from app.models.exercise import Exercise
 
 
 class ExerciseGroup(Base):
@@ -25,6 +30,10 @@ class ExerciseGroup(Base):
         DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
+    )
+
+    exercises: Mapped[list[Exercise]] = relationship(
+        "Exercise", back_populates="group", cascade="all, delete-orphan"
     )
 
     def __repr__(self) -> str:

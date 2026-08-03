@@ -87,6 +87,8 @@
     groupId: string;
     name: string;
     topicTag: string;
+    grade?: string;
+    subject?: string;
     maxPoints: number;
     minPoints: number;
     variants: Map<string, VariantMember[]>;
@@ -110,6 +112,8 @@
 
       const name = currentMembers[0]?.name || "Untitled";
       const topicTag = currentMembers[0]?.topicTag || "_General";
+      const grade = currentMembers[0]?.grade;
+      const subject = currentMembers[0]?.subject;
 
       const variants = new Map<string, VariantMember[]>();
       for (const ex of currentMembers) {
@@ -144,7 +148,7 @@
       const maxPoints = scores.length > 0 ? Math.max(...scores) : 0;
       const minPoints = scores.length > 0 ? Math.min(...scores) : 0;
 
-      groups.push({ groupId, name, topicTag, maxPoints, minPoints, variants: sortedVariants, allMembers });
+      groups.push({ groupId, name, topicTag, grade, subject, maxPoints, minPoints, variants: sortedVariants, allMembers });
     }
 
     groups.sort((a, b) => a.name.localeCompare(b.name));
@@ -568,6 +572,103 @@
     loadExercises();
   }
 
+  // Group metadata modal state
+  let isGroupModalOpen = false;
+  let editingGroup: ExerciseGroup | null = null;
+  let groupEditorName = "";
+  let groupEditorTopicTag = "_General";
+  let groupEditorGrade = "";
+  let groupEditorSubject = "";
+  let isGroupSaving = false;
+
+  function openGroupModal(group: ExerciseGroup) {
+    editingGroup = group;
+    groupEditorName = group.name;
+    groupEditorTopicTag = group.topicTag;
+    groupEditorGrade = group.grade || "";
+    groupEditorSubject = group.subject || "";
+    isGroupModalOpen = true;
+  }
+
+  async function handleSaveGroupMetadata() {
+    if (!editingGroup) return;
+    if (!groupEditorName.trim()) {
+      alert("Group name is required.");
+      return;
+    }
+
+    isGroupSaving = true;
+    try {
+      const key = get(sessionStore).sessionKey;
+      const updatedName = groupEditorName.trim();
+      const updatedTopicTag = groupEditorTopicTag.trim() || "_General";
+      const updatedGrade = groupEditorGrade.trim() || undefined;
+      const updatedSubject = groupEditorSubject.trim() || undefined;
+
+      const memberIds = new Set(editingGroup.allMembers.map((m) => m.ex.id));
+      const allLocal = await loadExercisesEncrypted(key);
+      const updatedRecords: ExerciseRecord[] = [];
+
+      for (const ex of allLocal) {
+        if (
+          (ex.exerciseGroupId && ex.exerciseGroupId === editingGroup.groupId) ||
+          memberIds.has(ex.id)
+        ) {
+          const updatedEx: ExerciseRecord = {
+            ...ex,
+            name: updatedName,
+            topicTag: updatedTopicTag,
+            grade: updatedGrade,
+            subject: updatedSubject,
+            updatedAt: new Date().toISOString(),
+          };
+          await saveExerciseEncrypted(updatedEx, key);
+          updatedRecords.push(updatedEx);
+        }
+      }
+
+      if ($isAuthenticated && $storagePolicyStore.storageMode !== "all-local") {
+        if (editingGroup.groupId && !editingGroup.groupId.startsWith("name:")) {
+          try {
+            await api.patch(`/exercises/groups/${editingGroup.groupId}`, {
+              name: updatedName,
+              topic_tag: updatedTopicTag,
+              grade: updatedGrade || null,
+              subject: updatedSubject || null,
+            });
+          } catch (apiErr) {
+            console.warn("Failed to patch group on API, updating individual exercises:", apiErr);
+            for (const record of updatedRecords) {
+              await api.patch(`/exercises/${record.id}`, {
+                name: record.name,
+                topic_tag: record.topicTag,
+                grade: record.grade || null,
+                subject: record.subject || null,
+              });
+            }
+          }
+        } else {
+          for (const record of updatedRecords) {
+            await api.patch(`/exercises/${record.id}`, {
+              name: record.name,
+              topic_tag: record.topicTag,
+              grade: record.grade || null,
+              subject: record.subject || null,
+            });
+          }
+        }
+      }
+
+      isGroupModalOpen = false;
+      editingGroup = null;
+      await loadExercises();
+    } catch (err: any) {
+      alert(`Failed to save group metadata: ${err.message}`);
+    } finally {
+      isGroupSaving = false;
+    }
+  }
+
   // Variant modal state
   let isVariantModalOpen = false;
   let variantBaseEx: ExerciseRecord | null = null;
@@ -599,6 +700,9 @@
     
     let targetGroupId = regroupTargetGroupId;
     let targetName = regroupingExercise.name;
+    let targetTopic = regroupingExercise.topicTag;
+    let targetGrade = regroupingExercise.grade;
+    let targetSubject = regroupingExercise.subject;
 
     if (targetGroupId === "NEW") {
       targetGroupId = crypto.randomUUID();
@@ -606,6 +710,9 @@
       const targetGroup = groupExercises(exercises).find(g => g.groupId === targetGroupId);
       if (targetGroup) {
         targetName = targetGroup.name;
+        targetTopic = targetGroup.topicTag;
+        targetGrade = targetGroup.grade;
+        targetSubject = targetGroup.subject;
         
         const collision = targetGroup.allMembers.find(m => m.ex.variantKey === regroupingExercise!.variantKey);
         if (collision) {
@@ -617,7 +724,10 @@
     const updatedEx = { 
       ...regroupingExercise, 
       exerciseGroupId: targetGroupId,
-      name: targetName
+      name: targetName,
+      topicTag: targetTopic,
+      grade: targetGrade,
+      subject: targetSubject,
     };
 
     try {
@@ -628,6 +738,9 @@
         await api.patch(`/exercises/${updatedEx.id}`, {
           exercise_group_id: updatedEx.exerciseGroupId,
           name: updatedEx.name,
+          topic_tag: updatedEx.topicTag,
+          grade: updatedEx.grade || null,
+          subject: updatedEx.subject || null,
           variant_key: updatedEx.variantKey || null
         });
       }
@@ -824,7 +937,7 @@
 
   function openVariantModal(ex: ExerciseRecord) {
     variantBaseEx = ex;
-    variantName = `${ex.name || "Exercise"} (Variant)`;
+    variantName = ex.name || "Exercise";
     variantKey = "Moebel";
     variantTopicTag = ex.topicTag || "_General";
     variantLatexBody = ex.latexBody || "";
@@ -860,8 +973,6 @@
     try {
       if ($storagePolicyStore.storageMode !== "all-local") {
         await api.post(`/exercises/${variantBaseEx.id}/new-variant`, {
-          name: variantName,
-          topic_tag: variantTopicTag,
           latex_body: variantLatexBody,
           variant_key: variantKey,
         });
@@ -874,8 +985,10 @@
         const variantRecord: ExerciseRecord = {
           id: crypto.randomUUID(),
           teacherId: $sessionStore.email || "local-teacher",
-          name: variantName,
-          topicTag: variantTopicTag,
+          name: variantBaseEx.name,
+          topicTag: variantBaseEx.topicTag,
+          grade: variantBaseEx.grade,
+          subject: variantBaseEx.subject,
           latexBody: variantLatexBody,
           maxPoints: parseExerciseScore(variantLatexBody),
           version: 1,
@@ -1016,6 +1129,17 @@
                     : `${group.maxPoints} Pkt`}
                 </span>
                 <span class="variant-count-badge">{variantCount} variant{variantCount !== 1 ? 's' : ''}</span>
+                <button
+                  class="group-action-btn edit-group-btn"
+                  title="Edit Group Metadata (Name, Topic Tag, Grade, Subject)"
+                  on:click|stopPropagation={() => openGroupModal(group)}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                  </svg>
+                  <span>Edit Group</span>
+                </button>
               </div>
             </div>
 
@@ -1131,6 +1255,17 @@
               <!-- Group-level actions -->
               <div class="group-actions">
                 <button
+                  class="group-action-btn edit-group-btn"
+                  title="Edit Group Metadata (Name, Topic Tag, Grade, Subject)"
+                  on:click={() => openGroupModal(group)}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                  </svg>
+                  <span>Edit Group</span>
+                </button>
+                <button
                   class="group-action-btn variant-btn"
                   title="Create parallel variant"
                   on:click={() => openVariantModal(rep)}
@@ -1164,7 +1299,7 @@
   {/if}
 </div>
 
-{#if isVariantModalOpen}
+{#if isVariantModalOpen && variantBaseEx}
   <div
     class="modal-backdrop"
     role="button"
@@ -1182,40 +1317,21 @@
 
       <div class="modal-body">
         <p class="desc-text">
-          Variants share the same exercise type structure but use a different
-          theme (e.g. Möbel, Fahrzeug, Wildtier). This allows generating
-          parallel exam groups while maintaining statistical comparability.
+          Variants share the same exercise group metadata but use a different
+          theme (e.g. Möbel, Fahrzeug, Wildtier).
         </p>
 
-        <div class="form-grid">
-          <div class="form-group">
-            <label for="variantName">Variant Name</label>
-            <input
-              id="variantName"
-              type="text"
-              bind:value={variantName}
-              required
-            />
-          </div>
-
-          <div class="form-group">
-            <label for="variantKey">Variant Theme / Key</label>
-            <input
-              id="variantKey"
-              type="text"
-              bind:value={variantKey}
-              placeholder="e.g. Moebel, Fahrzeug, Wildtier"
-              required
-            />
-          </div>
+        <div class="live-notice" style="margin-bottom: 1rem;">
+          📌 Group Context: <strong>{variantBaseEx.name}</strong> ({variantBaseEx.topicTag || '_General'}{variantBaseEx.grade ? `, Klasse ${variantBaseEx.grade}` : ''})
         </div>
 
         <div class="form-group">
-          <label for="variantTopic">Topic Tag</label>
+          <label for="variantKey">Variant Theme / Key</label>
           <input
-            id="variantTopic"
+            id="variantKey"
             type="text"
-            bind:value={variantTopicTag}
+            bind:value={variantKey}
+            placeholder="e.g. Moebel, Fahrzeug, Wildtier"
             required
           />
         </div>
@@ -1258,6 +1374,78 @@
   on:close={() => (isEditorOpen = false)}
   on:save={handleExerciseSaved}
 />
+
+<!-- EDIT GROUP METADATA MODAL -->
+{#if isGroupModalOpen && editingGroup}
+  <div
+    class="modal-backdrop"
+    role="button"
+    tabindex="-1"
+    on:click|self={() => (isGroupModalOpen = false)}
+    on:keydown|self={(e) => e.key === "Escape" && (isGroupModalOpen = false)}
+  >
+    <div class="modal-content small-modal">
+      <div class="modal-header">
+        <h3>Edit Exercise Group Metadata</h3>
+        <button class="close-btn" on:click={() => (isGroupModalOpen = false)}>✕</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="live-notice" style="margin-bottom: 1rem;">
+          ℹ️ Changes apply to all variants ({editingGroup.allMembers.length}) in this group.
+        </div>
+
+        <div class="form-group">
+          <label for="groupEditorName">Exercise Group Name</label>
+          <input
+            id="groupEditorName"
+            type="text"
+            bind:value={groupEditorName}
+            required
+          />
+        </div>
+
+        <div class="form-group">
+          <label for="groupEditorTopic">Topic Tag</label>
+          <input
+            id="groupEditorTopic"
+            type="text"
+            bind:value={groupEditorTopicTag}
+            placeholder="_Vererbung"
+            required
+          />
+        </div>
+
+        <div class="form-group">
+          <label for="groupEditorGrade">Grade / Klasse</label>
+          <input
+            id="groupEditorGrade"
+            type="text"
+            bind:value={groupEditorGrade}
+            placeholder="e.g. 10, 10a, 12"
+          />
+        </div>
+
+        <div class="form-group">
+          <label for="groupEditorSubject">Subject / Fach</label>
+          <input
+            id="groupEditorSubject"
+            type="text"
+            bind:value={groupEditorSubject}
+            placeholder="e.g. Informatik, Mathematik"
+          />
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button class="cancel-btn" on:click={() => (isGroupModalOpen = false)}>Cancel</button>
+        <button class="save-btn" on:click={handleSaveGroupMetadata} disabled={isGroupSaving}>
+          {isGroupSaving ? "Saving..." : "Save Group Metadata"}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <!-- RE-GROUP MODAL -->
 {#if isRegroupModalOpen && regroupingExercise}

@@ -17,6 +17,8 @@ from app.models.teacher import Teacher
 from app.schemas.exam import (
     ExamUsageItem,
     ExerciseCreate,
+    ExerciseGroupResponse,
+    ExerciseGroupUpdate,
     ExerciseResponse,
     ExerciseUpdate,
     ExerciseUsageResponse,
@@ -119,6 +121,57 @@ async def list_exercises(
     return [_to_res(ex) for ex in exercises]
 
 
+@router.patch("/groups/{group_id}", response_model=ExerciseGroupResponse)
+async def update_exercise_group(
+    group_id: uuid.UUID,
+    body: ExerciseGroupUpdate,
+    teacher: Teacher = Depends(get_current_teacher),
+    db: AsyncSession = Depends(get_db),
+) -> ExerciseGroupResponse:
+    """Update exercise group metadata (name, topic_tag, grade, subject) and cascade to all member variants."""
+    res = await db.execute(
+        select(ExerciseGroup).where(
+            ExerciseGroup.id == group_id,
+            ExerciseGroup.teacher_id == teacher.id,
+        )
+    )
+    group = res.scalar_one_or_none()
+    if not group:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Exercise group not found")
+
+    if body.name is not None:
+        group.name = body.name
+    if body.topic_tag is not None:
+        group.topic_tag = body.topic_tag
+    if body.grade is not None:
+        group.grade = body.grade
+    if body.subject is not None:
+        group.subject = body.subject
+
+    # Cascade changes to all exercises in group
+    ex_res = await db.execute(select(Exercise).where(Exercise.exercise_group_id == group_id))
+    for ex in ex_res.scalars().all():
+        if body.name is not None:
+            ex.name = body.name
+        if body.topic_tag is not None:
+            ex.topic_tag = body.topic_tag
+        if body.grade is not None:
+            ex.grade = body.grade
+        if body.subject is not None:
+            ex.subject = body.subject
+
+    await db.flush()
+    return ExerciseGroupResponse(
+        id=group.id,
+        teacher_id=group.teacher_id,
+        name=group.name,
+        topic_tag=group.topic_tag,
+        grade=group.grade,
+        subject=group.subject,
+        created_at=group.created_at,
+    )
+
+
 @router.post("", response_model=ExerciseResponse, status_code=status.HTTP_201_CREATED)
 async def create_exercise(
     body: ExerciseCreate,
@@ -129,24 +182,37 @@ async def create_exercise(
     computed_score = parse_exercise_score(body.latex_body) if body.latex_body else body.max_points
 
     group_id = body.exercise_group_id
+    group_name = body.name or "Untitled Group"
+    group_topic = body.topic_tag
+    group_grade = body.grade
+    group_subject = body.subject
+
     if not group_id:
         group = ExerciseGroup(
             teacher_id=teacher.id,
-            name=body.name or "Untitled Group",
-            topic_tag=body.topic_tag,
-            grade=body.grade,
-            subject=body.subject,
+            name=group_name,
+            topic_tag=group_topic,
+            grade=group_grade,
+            subject=group_subject,
         )
         db.add(group)
         await db.flush()
         group_id = group.id
+    else:
+        group_res = await db.execute(select(ExerciseGroup).where(ExerciseGroup.id == group_id))
+        group = group_res.scalar_one_or_none()
+        if group:
+            group_name = group.name
+            group_topic = group.topic_tag
+            group_grade = group.grade
+            group_subject = group.subject
 
     kwargs = {
         "teacher_id": teacher.id,
-        "name": body.name,
-        "topic_tag": body.topic_tag,
-        "grade": body.grade,
-        "subject": body.subject,
+        "name": group_name,
+        "topic_tag": group_topic,
+        "grade": group_grade,
+        "subject": group_subject,
         "latex_body": body.latex_body,
         "max_points": computed_score,
         "version": 1,
@@ -212,6 +278,37 @@ async def update_exercise(
     if body.variant_key is not None:
         ex.variant_key = body.variant_key
 
+    # Cascade group metadata changes if exercise belongs to a group
+    if ex.exercise_group_id and (
+        body.name is not None
+        or body.topic_tag is not None
+        or body.grade is not None
+        or body.subject is not None
+    ):
+        group_res = await db.execute(select(ExerciseGroup).where(ExerciseGroup.id == ex.exercise_group_id))
+        group = group_res.scalar_one_or_none()
+        if group:
+            if body.name is not None:
+                group.name = body.name
+            if body.topic_tag is not None:
+                group.topic_tag = body.topic_tag
+            if body.grade is not None:
+                group.grade = body.grade
+            if body.subject is not None:
+                group.subject = body.subject
+
+        # Cascade to all exercise variants in group
+        ex_res = await db.execute(select(Exercise).where(Exercise.exercise_group_id == ex.exercise_group_id))
+        for sister in ex_res.scalars().all():
+            if body.name is not None:
+                sister.name = body.name
+            if body.topic_tag is not None:
+                sister.topic_tag = body.topic_tag
+            if body.grade is not None:
+                sister.grade = body.grade
+            if body.subject is not None:
+                sister.subject = body.subject
+
     await db.flush()
     return _to_res(ex)
 
@@ -245,16 +342,24 @@ async def create_new_version(
         await db.flush()
         group_id = group.id
         old_ex.exercise_group_id = group_id
+    else:
+        group_res = await db.execute(select(ExerciseGroup).where(ExerciseGroup.id == group_id))
+        group = group_res.scalar_one_or_none()
+
+    group_name = group.name if group else old_ex.name
+    group_topic = group.topic_tag if group else old_ex.topic_tag
+    group_grade = group.grade if group else old_ex.grade
+    group_subject = group.subject if group else old_ex.subject
 
     new_latex = body.latex_body if body.latex_body is not None else old_ex.latex_body
     computed_score = parse_exercise_score(new_latex) if new_latex else old_ex.max_points
 
     new_ex = Exercise(
         teacher_id=teacher.id,
-        name=body.name if body.name is not None else old_ex.name,
-        topic_tag=body.topic_tag if body.topic_tag is not None else old_ex.topic_tag,
-        grade=body.grade if body.grade is not None else old_ex.grade,
-        subject=body.subject if body.subject is not None else old_ex.subject,
+        name=body.name if body.name is not None else group_name,
+        topic_tag=body.topic_tag if body.topic_tag is not None else group_topic,
+        grade=body.grade if body.grade is not None else group_grade,
+        subject=body.subject if body.subject is not None else group_subject,
         latex_body=new_latex,
         max_points=computed_score,
         version=old_ex.version + 1,
@@ -297,15 +402,23 @@ async def create_new_variant(
         await db.flush()
         group_id = group.id
         base_ex.exercise_group_id = group_id
+    else:
+        group_res = await db.execute(select(ExerciseGroup).where(ExerciseGroup.id == group_id))
+        group = group_res.scalar_one_or_none()
+
+    group_name = group.name if group else base_ex.name
+    group_topic = group.topic_tag if group else base_ex.topic_tag
+    group_grade = group.grade if group else base_ex.grade
+    group_subject = group.subject if group else base_ex.subject
 
     computed_score = parse_exercise_score(body.latex_body) if body.latex_body else body.max_points
 
     variant_ex = Exercise(
         teacher_id=teacher.id,
-        name=body.name or base_ex.name,
-        topic_tag=body.topic_tag or base_ex.topic_tag,
-        grade=body.grade or base_ex.grade,
-        subject=body.subject or base_ex.subject,
+        name=group_name,
+        topic_tag=group_topic,
+        grade=group_grade,
+        subject=group_subject,
         latex_body=body.latex_body,
         max_points=computed_score,
         version=1,

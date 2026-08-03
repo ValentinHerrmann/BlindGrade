@@ -35,6 +35,23 @@ class ExerciseUpdate(BaseModel):
     variant_key: str | None = None
 
 
+class ExerciseGroupUpdate(BaseModel):
+    name: str | None = None
+    topic_tag: str | None = None
+    grade: str | None = None
+    subject: str | None = None
+
+
+class ExerciseGroupResponse(BaseModel):
+    id: uuid.UUID
+    teacher_id: uuid.UUID
+    name: str
+    topic_tag: str | None = None
+    grade: str | None = None
+    subject: str | None = None
+    created_at: datetime
+
+
 class ExerciseResponse(BaseModel):
     id: uuid.UUID
     teacher_id: uuid.UUID | None = None

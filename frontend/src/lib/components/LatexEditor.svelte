@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy, createEventDispatcher } from "svelte";
-  import { EditorView, keymap, drawSelection } from "@codemirror/view";
+  import { EditorView, keymap, drawSelection, lineNumbers } from "@codemirror/view";
   import { EditorState, Compartment } from "@codemirror/state";
   import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
   import { StreamLanguage, HighlightStyle, syntaxHighlighting } from "@codemirror/language";
@@ -47,6 +47,19 @@
       ".cm-line": {
         padding: "0"
       },
+      ".cm-gutters": {
+        backgroundColor: "#0f172a",
+        color: "#64748b",
+        borderRight: "1px solid #334155",
+        borderRadius: "0.375rem 0 0 0.375rem"
+      },
+      ".cm-gutterElement": {
+        padding: "0 8px 0 12px"
+      },
+      ".cm-activeLineGutter": {
+        backgroundColor: "transparent",
+        color: "#f1f5f9"
+      },
       ".cm-cursor, .cm-dropCursor": {
         borderLeftColor: "#38bdf8"
       },
@@ -66,6 +79,8 @@
     const state = EditorState.create({
       doc: value,
       extensions: [
+        lineNumbers(),
+        EditorView.lineWrapping,
         history(),
         drawSelection(),
         keymap.of([...defaultKeymap, ...historyKeymap]),

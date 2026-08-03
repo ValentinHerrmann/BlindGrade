@@ -99,6 +99,7 @@ async def get_or_create_exercise(
 
     group_id = None
     variant_key = None
+    group_name = ex_name
     if "_" in ex_name:
         parts = ex_name.split("_", 1)
         group_name = f"{topic_tag or ''} {parts[0]}".strip()
@@ -125,7 +126,7 @@ async def get_or_create_exercise(
 
     db_ex = Exercise(
         teacher_id=teacher.id,
-        name=ex_name,
+        name=group_name,
         topic_tag=topic_tag,
         grade=grade,
         subject=subject,
