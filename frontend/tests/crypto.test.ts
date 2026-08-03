@@ -180,6 +180,31 @@ describe('HKDF Session Key Derivation', () => {
     const sessionKey = await deriveSessionKey(masterKey, nonce);
     expect(sessionKey.algorithm.name).toBe('AES-GCM');
   });
+
+  it('derives identical session key when nonce has non-zero byteOffset', async () => {
+    const masterRaw = new Uint8Array(32).fill(99);
+    const masterKey = await crypto.subtle.importKey(
+      'raw',
+      masterRaw,
+      'HKDF',
+      false,
+      ['deriveKey']
+    );
+
+    const fullBuffer = new Uint8Array(100);
+    fullBuffer.set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], 20);
+    const slicedNonce = fullBuffer.subarray(20, 32); // byteOffset 20
+    const standaloneNonce = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+
+    const keyFromSliced = await deriveSessionKey(masterKey, slicedNonce);
+    const keyFromStandalone = await deriveSessionKey(masterKey, standaloneNonce);
+
+    const testPlaintext = new TextEncoder().encode('Test Data');
+    const encResult = await encrypt(keyFromSliced, testPlaintext);
+    const decrypted = await decrypt(keyFromStandalone, encResult.ciphertext, encResult.iv);
+
+    expect(decrypted).toEqual(testPlaintext);
+  });
 });
 
 describe('IndexedDB Record Encryption-at-Rest', () => {

@@ -6,6 +6,10 @@
  * is only used to re-derive the session key on unlock.
  */
 
+import { writable, derived, get } from 'svelte/store';
+import { deriveKey, generateSalt } from '$lib/crypto/keyDerivation';
+import { toArrayBuffer } from '$lib/crypto/aesGcm';
+
 /** 12-byte nonce for session key derivation. */
 export function generateSessionNonce(): Uint8Array {
   const nonce = new Uint8Array(12);
@@ -26,7 +30,7 @@ export async function deriveSessionKey(
     {
       name: 'HKDF',
       hash: 'SHA-256',
-      salt: nonce.buffer as ArrayBuffer,
+      salt: toArrayBuffer(nonce),
       info: new TextEncoder().encode('blindgrade-session-key-v1'),
     },
     masterKey,
@@ -48,7 +52,7 @@ export async function deriveLegacySessionKey(
     {
       name: 'HKDF',
       hash: 'SHA-256',
-      salt: nonce.buffer as ArrayBuffer,
+      salt: toArrayBuffer(nonce),
       info: new TextEncoder().encode('blindgrade-session-key-v1'),
     },
     masterKey,

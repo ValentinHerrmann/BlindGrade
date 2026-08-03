@@ -274,6 +274,7 @@
         $sessionStore.sessionKey,
         sub.scanCt,
         sub.scanIv,
+        $sessionStore.fallbackSessionKey
       );
       const blob = new Blob([decryptedBytes.buffer as ArrayBuffer], {
         type: "image/png",
@@ -308,6 +309,7 @@
             $sessionStore.sessionKey,
             sub.annotationCt,
             sub.annotationIv,
+            $sessionStore.fallbackSessionKey
           ).then((annBytes) => {
             const jsonStr = new TextDecoder().decode(annBytes);
             currentStrokes = JSON.parse(jsonStr);
@@ -321,6 +323,17 @@
       img.src = url;
     } catch (err) {
       console.error("Failed to decrypt scan for grading:", err);
+      if (scanCanvas && overlayCanvas) {
+        scanCanvas.width = 600;
+        scanCanvas.height = 800;
+        overlayCanvas.width = 600;
+        overlayCanvas.height = 800;
+        ctx.fillStyle = "#1e293b";
+        ctx.fillRect(0, 0, 600, 800);
+        ctx.fillStyle = "#ef4444";
+        ctx.font = "16px sans-serif";
+        ctx.fillText("[ Scan Decryption Failed — Key Mismatch or Data Corrupted ]", 80, 400);
+      }
     }
   }
 

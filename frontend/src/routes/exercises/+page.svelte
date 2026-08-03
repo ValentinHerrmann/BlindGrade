@@ -9,7 +9,7 @@
   import { parseExerciseScore } from "$lib/latex/scoreParser";
   import { get } from "svelte/store";
 
-  import LatexEditor, { type DiffDecorationConfig, type DiffLineDecoration, type DiffWordDecoration, type DiffGapDecoration } from "$lib/components/LatexEditor.svelte";
+  import LatexEditor, { type DiffDecorationConfig, type DiffLineDecoration, type DiffLinePaddingDecoration, type DiffWordDecoration, type DiffGapDecoration } from "$lib/components/LatexEditor.svelte";
   import LatexViewer from "$lib/components/LatexViewer.svelte";
   import { highlightLatexToHtml } from "$lib/latex/highlighter";
   import ExerciseEditorModal from "$lib/components/ExerciseEditorModal.svelte";
@@ -523,11 +523,13 @@
           }
         }
 
-        leftDecoLines.push({
-          lineNumber,
-          type: leftItem.type,
-          words: words.length > 0 ? words : undefined
-        });
+        if (leftItem.type !== "empty") {
+          leftDecoLines.push({
+            lineNumber,
+            type: leftItem.type,
+            words: words.length > 0 ? words : undefined
+          });
+        }
 
         if (hTarget > hLeft + 0.5) {
           leftPaddings.push({
@@ -567,11 +569,13 @@
           }
         }
 
-        rightDecoLines.push({
-          lineNumber,
-          type: rightItem.type,
-          words: words.length > 0 ? words : undefined
-        });
+        if (rightItem.type !== "empty") {
+          rightDecoLines.push({
+            lineNumber,
+            type: rightItem.type,
+            words: words.length > 0 ? words : undefined
+          });
+        }
 
         if (hTarget > hRight + 0.5) {
           rightPaddings.push({

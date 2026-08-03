@@ -5,7 +5,7 @@
   import { db } from "$lib/db/db";
   import { sessionStore, isAuthenticated } from "$lib/stores/session";
   import { storagePolicyStore } from "$lib/stores/storagePolicy";
-  import { saveExerciseEncrypted } from "$lib/db/dbEncryption";
+  import { saveExerciseEncrypted, loadExercisesEncrypted } from "$lib/db/dbEncryption";
   import { api } from "$lib/api/client";
   import { parseExerciseScore, formatExerciseLatex } from "$lib/latex/scoreParser";
   import { compileLatex } from "$lib/latex/compiler";

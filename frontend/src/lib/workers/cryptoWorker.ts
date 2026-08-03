@@ -13,6 +13,13 @@ export type CryptoWorkerResponse =
   | { type: 'DECRYPTED'; plaintext: Uint8Array; id: number }
   | { type: 'ERROR'; message: string; id: number };
 
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  if (bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength) {
+    return bytes.buffer as ArrayBuffer;
+  }
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
 self.onmessage = async (event: MessageEvent<CryptoWorkerRequest>) => {
   const req = event.data;
   try {
@@ -21,9 +28,9 @@ self.onmessage = async (event: MessageEvent<CryptoWorkerRequest>) => {
       crypto.getRandomValues(iv);
 
       const ctBuffer = await crypto.subtle.encrypt(
-        { name: 'AES-GCM', iv: iv.buffer as ArrayBuffer },
+        { name: 'AES-GCM', iv: toArrayBuffer(iv) },
         req.key,
-        req.plaintext.buffer as ArrayBuffer
+        toArrayBuffer(req.plaintext)
       );
       const ciphertext = new Uint8Array(ctBuffer);
 
@@ -33,9 +40,9 @@ self.onmessage = async (event: MessageEvent<CryptoWorkerRequest>) => {
       );
     } else if (req.type === 'DECRYPT') {
       const ptBuffer = await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv: req.iv.buffer as ArrayBuffer },
+        { name: 'AES-GCM', iv: toArrayBuffer(req.iv) },
         req.key,
-        req.ciphertext.buffer as ArrayBuffer
+        toArrayBuffer(req.ciphertext)
       );
       const plaintext = new Uint8Array(ptBuffer);
 

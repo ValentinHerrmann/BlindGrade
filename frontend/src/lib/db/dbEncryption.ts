@@ -11,6 +11,8 @@
 
 import { encrypt, decrypt } from '$lib/crypto/aesGcm';
 import { db } from '$lib/db/db';
+import { sessionStore } from '$lib/stores/session';
+import { get } from 'svelte/store';
 import type {
   ExamRecord,
   ExerciseRecord,
@@ -31,8 +33,9 @@ async function encryptBytes(key: CryptoKey, bytes: Uint8Array): Promise<{ ct: Ui
 }
 
 /** Decrypt raw bytes with key. */
-async function decryptBytes(key: CryptoKey, ct: Uint8Array, iv: Uint8Array): Promise<Uint8Array> {
-  return await decrypt(key, ct, iv);
+async function decryptBytes(key: CryptoKey, ct: Uint8Array, iv: Uint8Array, fallbackKey?: CryptoKey | null): Promise<Uint8Array> {
+  const activeFallbackKey = fallbackKey ?? (typeof window !== 'undefined' ? get(sessionStore).fallbackSessionKey : null);
+  return await decrypt(key, ct, iv, activeFallbackKey);
 }
 
 // ---------------------------------------------------------------------------
@@ -415,6 +418,7 @@ export async function decryptSubmission(submission: SubmissionRecord, key: Crypt
     id: submission.id,
     examId: submission.examId,
     pseudonymHash: submission.pseudonymHash,
+    totalScore: submission.totalScore,
     scanCt: submission.scanCt,
     scanIv: submission.scanIv,
     annotationCt: submission.annotationCt,

@@ -1,3 +1,5 @@
+import { toArrayBuffer } from './aesGcm';
+
 /**
  * Client-side HMAC-SHA-256 helpers.
  *
@@ -14,7 +16,7 @@
 export async function importHmacKey(keyBytes: Uint8Array): Promise<CryptoKey> {
   return crypto.subtle.importKey(
     'raw',
-    keyBytes.buffer as ArrayBuffer,
+    toArrayBuffer(keyBytes),
     { name: 'HMAC', hash: 'SHA-256' },
     false, // non-extractable
     ['sign', 'verify']

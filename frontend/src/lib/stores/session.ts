@@ -12,13 +12,14 @@
  */
 
 import { writable, derived, get } from 'svelte/store';
-import { deriveKey, generateSalt } from '$lib/crypto/keyDerivation';
+import { deriveKey, deriveKeyWithFallback, generateSalt } from '$lib/crypto/keyDerivation';
 import { deriveSessionKey, generateSessionNonce } from '$lib/crypto/sessionKey';
 
 export interface SessionState {
   mode: 'local' | 'hybrid' | 'authenticated' | null;
   masterKey: CryptoKey | null;      // Argon2id-derived — never serialized
   sessionKey: CryptoKey | null;     // HKDF-derived from masterKey + nonce
+  fallbackSessionKey: CryptoKey | null; // PBKDF2 alternative key for robust decryption
   sessionNonce: Uint8Array | null;
   lockedAt: number | null;          // Unix ms
   isDirty: boolean;                 // Unsaved IDB changes
@@ -30,6 +31,7 @@ const INITIAL_STATE: SessionState = {
   mode: null,
   masterKey: null,
   sessionKey: null,
+  fallbackSessionKey: null,
   sessionNonce: null,
   lockedAt: null,
   isDirty: false,
@@ -47,19 +49,26 @@ function createSessionStore() {
     unlock(params: {
       masterKey: CryptoKey;
       sessionKey: CryptoKey;
+      fallbackSessionKey?: CryptoKey | null;
       sessionNonce: Uint8Array;
       email?: string;
       role?: 'teacher' | 'admin';
       mode?: 'local' | 'hybrid' | 'authenticated';
     }) {
+      const mode = params.mode ?? 'authenticated';
       if (typeof localStorage !== 'undefined') {
         localStorage.removeItem('bg_session_locked');
+        localStorage.setItem('bg_session_mode', mode);
+        if (params.email) {
+          localStorage.setItem('bg_user_email', params.email);
+        }
       }
       update((s) => ({
         ...s,
-        mode: params.mode ?? 'authenticated',
+        mode,
         masterKey: params.masterKey,
         sessionKey: params.sessionKey,
+        fallbackSessionKey: params.fallbackSessionKey ?? null,
         sessionNonce: params.sessionNonce,
         lockedAt: null,
         email: params.email ?? s.email,
@@ -93,16 +102,21 @@ function createSessionStore() {
         sessionNonce = new Uint8Array(atob(nonceB64).split('').map((c) => c.charCodeAt(0)));
       }
 
-      const masterKey = await deriveKey(pwd, salt);
+      const { masterKey, fallbackMasterKey } = await deriveKeyWithFallback(pwd, salt);
       const sessionKey = await deriveSessionKey(masterKey, sessionNonce);
+      const fallbackSessionKey = fallbackMasterKey
+        ? await deriveSessionKey(fallbackMasterKey, sessionNonce)
+        : null;
 
       localStorage.removeItem('bg_session_locked');
+      localStorage.setItem('bg_session_mode', 'local');
 
       update((s) => ({
         ...s,
         mode: 'local',
         masterKey,
         sessionKey,
+        fallbackSessionKey,
         sessionNonce,
         lockedAt: null,
         email: null,

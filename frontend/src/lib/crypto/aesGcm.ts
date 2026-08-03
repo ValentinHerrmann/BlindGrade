@@ -16,6 +16,18 @@ export interface EncryptResult {
 }
 
 /**
+ * Safely converts a Uint8Array (or ArrayBufferView) to an ArrayBuffer slice
+ * that respects byteOffset and byteLength. Prevents passing entire underlying
+ * WASM heap or shared buffers to WebCrypto APIs.
+ */
+export function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  if (bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength) {
+    return bytes.buffer as ArrayBuffer;
+  }
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
+/**
  * Encrypt plaintext with AES-256-GCM.
  * Generates a fresh random 12-byte IV on every call.
  */
@@ -23,10 +35,7 @@ export async function encrypt(key: CryptoKey, plaintext: Uint8Array): Promise<En
   const iv = new Uint8Array(12);
   crypto.getRandomValues(iv); // Fresh random IV — never reuse
 
-  const plaintextBuffer =
-    plaintext.byteOffset === 0 && plaintext.byteLength === plaintext.buffer.byteLength
-      ? (plaintext.buffer as ArrayBuffer)
-      : (plaintext.buffer.slice(plaintext.byteOffset, plaintext.byteOffset + plaintext.byteLength) as ArrayBuffer);
+  const plaintextBuffer = toArrayBuffer(plaintext);
 
   const ciphertextBuffer = await crypto.subtle.encrypt(
     { name: 'AES-GCM', iv },
@@ -48,24 +57,34 @@ export async function encrypt(key: CryptoKey, plaintext: Uint8Array): Promise<En
 export async function decrypt(
   key: CryptoKey,
   ciphertext: Uint8Array,
-  iv: Uint8Array
+  iv: Uint8Array,
+  fallbackKey?: CryptoKey | null
 ): Promise<Uint8Array> {
-  const ciphertextBuffer =
-    ciphertext.byteOffset === 0 && ciphertext.byteLength === ciphertext.buffer.byteLength
-      ? (ciphertext.buffer as ArrayBuffer)
-      : (ciphertext.buffer.slice(ciphertext.byteOffset, ciphertext.byteOffset + ciphertext.byteLength) as ArrayBuffer);
+  const ciphertextBuffer = toArrayBuffer(ciphertext);
+  const ivBuffer = toArrayBuffer(iv);
 
-  const ivBuffer =
-    iv.byteOffset === 0 && iv.byteLength === iv.buffer.byteLength
-      ? (iv.buffer as ArrayBuffer)
-      : (iv.buffer.slice(iv.byteOffset, iv.byteOffset + iv.byteLength) as ArrayBuffer);
-
-  const plaintextBuffer = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: ivBuffer },
-    key,
-    ciphertextBuffer
-  );
-  return new Uint8Array(plaintextBuffer);
+  try {
+    const plaintextBuffer = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: ivBuffer },
+      key,
+      ciphertextBuffer
+    );
+    return new Uint8Array(plaintextBuffer);
+  } catch (primaryErr) {
+    if (fallbackKey) {
+      try {
+        const plaintextBuffer = await crypto.subtle.decrypt(
+          { name: 'AES-GCM', iv: ivBuffer },
+          fallbackKey,
+          ciphertextBuffer
+        );
+        return new Uint8Array(plaintextBuffer);
+      } catch {
+        // Fallback also failed, re-throw primary error
+      }
+    }
+    throw primaryErr;
+  }
 }
 
 /** Safe Uint8Array to Base64 string converter (chunks array to prevent call stack size exceeded). */

@@ -44,8 +44,19 @@
       typeof localStorage !== "undefined" &&
       localStorage.getItem("bg_session_locked") === "true";
 
-    if (isLockedInStorage) {
-      if ($page.url.pathname !== "/unlock") {
+    const savedMode =
+      typeof localStorage !== "undefined"
+        ? localStorage.getItem("bg_session_mode")
+        : null;
+
+    const policy = get(storagePolicyStore);
+
+    if (
+      isLockedInStorage ||
+      savedMode === "authenticated" ||
+      policy.storageMode === "all-server"
+    ) {
+      if (!get(isUnlocked) && $page.url.pathname !== "/unlock") {
         await goto("/unlock");
       }
     } else {

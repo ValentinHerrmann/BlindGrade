@@ -1,6 +1,6 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
-  import { deriveKey, generateSalt, getUserSalt, getUserSessionNonce } from "$lib/crypto/keyDerivation";
+  import { deriveKey, deriveKeyWithFallback, generateSalt, getUserSalt, getUserSessionNonce } from "$lib/crypto/keyDerivation";
   import {
     deriveSessionKey,
     generateSessionNonce,
@@ -59,13 +59,17 @@
 
       // Derive local session keys deterministically from user email & password
       const salt = await getUserSalt(normalizedEmail);
-      const masterKey = await deriveKey(password, salt);
+      const { masterKey, fallbackMasterKey } = await deriveKeyWithFallback(password, salt);
       const sessionNonce = await getUserSessionNonce(normalizedEmail);
       const sessionKey = await deriveSessionKey(masterKey, sessionNonce);
+      const fallbackSessionKey = fallbackMasterKey
+        ? await deriveSessionKey(fallbackMasterKey, sessionNonce)
+        : null;
 
       sessionStore.unlock({
         masterKey,
         sessionKey,
+        fallbackSessionKey,
         sessionNonce,
         email: user.email,
         role: user.role,
