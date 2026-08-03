@@ -342,48 +342,6 @@
     });
   }
 
-  async function extractPagesFromFile(
-    file: File,
-  ): Promise<{ imageData: ImageData; buffer: Uint8Array }[]> {
-    if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
-      try {
-        const pdfjsLib = await import("pdfjs-dist");
-        if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
-          pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
-        }
-        const arrayBuffer = await file.arrayBuffer();
-        const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-        const pdf = await loadingTask.promise;
-        const pages: { imageData: ImageData; buffer: Uint8Array }[] = [];
-
-        for (let i = 1; i <= pdf.numPages; i++) {
-          const page = await pdf.getPage(i);
-          const viewport = page.getViewport({ scale: 2.0 }); // ~200 DPI
-          const canvas = document.createElement("canvas");
-          canvas.width = viewport.width;
-          canvas.height = viewport.height;
-          const ctx = canvas.getContext("2d")!;
-          await page.render({ canvasContext: ctx, canvas, viewport } as any)
-            .promise;
-
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const blob: Blob = await new Promise((res) =>
-            canvas.toBlob((b) => res(b!), "image/png"),
-          );
-          const buffer = new Uint8Array(await blob.arrayBuffer());
-          pages.push({ imageData, buffer });
-        }
-        return pages;
-      } catch (pdfErr) {
-        console.error("PDF parsing error:", pdfErr);
-        return [];
-      }
-    } else {
-      const single = await loadImageData(file);
-      return [single];
-    }
-  }
-
   async function handleFileUpload(event: Event) {
     const input = event.target as HTMLInputElement;
     if (!input.files || input.files.length === 0) return;
@@ -405,34 +363,44 @@
     let processedPages = 0;
     let totalPagesCount = 0;
 
-    const extractedPages: { fileName: string; pageIndex: number; imageData: ImageData; buffer: Uint8Array }[] = [];
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      statusText = `Extracting file ${i + 1} of ${files.length}: ${file.name}`;
-      const pages = await extractPagesFromFile(file);
-      for (let pIdx = 0; pIdx < pages.length; pIdx++) {
-        extractedPages.push({
-          fileName: file.name,
-          pageIndex: pIdx + 1,
-          imageData: pages[pIdx].imageData,
-          buffer: pages[pIdx].buffer,
-        });
+    // --- PASS 1: Calculate total pages for progress bar ---
+    const fileInfos: any[] = [];
+    statusText = "Analyzing files...";
+
+    for (const file of files) {
+      if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
+        try {
+          const pdfjsLib = await import("pdfjs-dist");
+          if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+            pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+          }
+          const fileUrl = URL.createObjectURL(file);
+          const loadingTask = pdfjsLib.getDocument({ url: fileUrl });
+          const pdf = await loadingTask.promise;
+
+          totalPagesCount += pdf.numPages;
+          fileInfos.push({ file, type: "pdf", pdf, loadingTask, fileUrl });
+        } catch (pdfErr) {
+          console.error("Failed to load PDF:", pdfErr);
+        }
+      } else {
+        totalPagesCount += 1;
+        fileInfos.push({ file, type: "image" });
       }
     }
-    totalPagesCount = extractedPages.length;
 
-    for (let pIdx = 0; pIdx < extractedPages.length; pIdx++) {
+    // --- HELPER: Process Single Page ---
+    async function processScannedPage(fileName: string, imageData: ImageData, buffer: Uint8Array) {
       processedPages++;
       progress = Math.round((processedPages / Math.max(totalPagesCount, 1)) * 50);
-      const pageItem = extractedPages[pIdx];
-      statusText = `Scanning page ${processedPages} of ${totalPagesCount}: ${pageItem.fileName}`;
+      statusText = `Scanning page ${processedPages} of ${totalPagesCount}: ${fileName}`;
 
       let qrResult: QrWorkerResponse | null = null;
       if (qrPool) {
         try {
           const res = await qrPool.dispatch({
             type: "QR_DECODE",
-            imageData: pageItem.imageData,
+            imageData: imageData,
           });
           if (res.type === "QR_RESULT") {
             qrResult = res;
@@ -456,23 +424,74 @@
           studentName: parsedStudent?.displayName,
           studentNumber: parsedStudent?.studentNumber,
           isUnmatched: false,
-          pageBuffers: [pageItem.buffer],
+          pageBuffers: [buffer],
         });
       } else {
         if (booklets.length > 0) {
-          booklets[booklets.length - 1].pageBuffers.push(pageItem.buffer);
+          booklets[booklets.length - 1].pageBuffers.push(buffer);
         } else {
           const pseudoId: string = crypto.randomUUID();
           booklets.push({
             pseudonymId: pseudoId,
             fallbackCode: `UNMATCHED-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
             isUnmatched: true,
-            pageBuffers: [pageItem.buffer],
+            pageBuffers: [buffer],
           });
         }
       }
 
       monitor?.checkMemoryHealth();
+    }
+
+    // --- PASS 2: Extract & Process Iteratively ---
+    for (let i = 0; i < fileInfos.length; i++) {
+      const info = fileInfos[i];
+      const fileName = info.file.name;
+
+      if (info.type === "pdf") {
+        const pdf = info.pdf;
+        for (let pIdx = 1; pIdx <= pdf.numPages; pIdx++) {
+          const page = await pdf.getPage(pIdx);
+          const viewport = page.getViewport({ scale: 2.0 }); // ~200 DPI
+          const canvas = document.createElement("canvas");
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const ctx = canvas.getContext("2d")!;
+          await page.render({ canvasContext: ctx, canvas, viewport } as any).promise;
+
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+          const blob: Blob | null = await new Promise((res) =>
+            canvas.toBlob((b) => res(b), "image/png"),
+          );
+
+          if (!blob) {
+            alert(`Error: Canvas out of memory on page ${pIdx} of ${fileName}. Try importing fewer files or close other tabs.`);
+            throw new Error("Canvas toBlob failed (null)");
+          }
+
+          const buffer = new Uint8Array(await blob.arrayBuffer());
+
+          // Scan and group immediately, dropping imageData after use
+          await processScannedPage(fileName, imageData, buffer);
+
+          // Clean up page resources
+          page.cleanup();
+        }
+
+        // Clean up PDF resources
+        await info.loadingTask.destroy();
+        URL.revokeObjectURL(info.fileUrl);
+
+      } else {
+        // Handle Image
+        try {
+          const { imageData, buffer } = await loadImageData(info.file);
+          await processScannedPage(fileName, imageData, buffer);
+        } catch (imgErr) {
+          console.error("Failed to load image file:", imgErr);
+        }
+      }
     }
 
     let newlyIngestedCount = 0;

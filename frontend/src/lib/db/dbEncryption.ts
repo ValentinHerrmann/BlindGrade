@@ -104,7 +104,7 @@ export async function decryptExam(exam: ExamRecord, key: CryptoKey | null): Prom
     payloadIv: exam.payloadIv,
   };
 
-  if (!key || !exam.payloadCt || !exam.payloadIv) {
+  if (!key || !exam.payloadCt || !exam.payloadIv || exam.payloadCt.byteLength < 16) {
     return baseRecord;
   }
 
@@ -227,7 +227,7 @@ export async function decryptExercise(exercise: ExerciseRecord, key: CryptoKey |
     payloadIv: exercise.payloadIv,
   };
 
-  if (!key || !exercise.payloadCt || !exercise.payloadIv) {
+  if (!key || !exercise.payloadCt || !exercise.payloadIv || exercise.payloadCt.byteLength < 16) {
     return baseRecord;
   }
 
@@ -287,7 +287,7 @@ export async function decryptScore(scoreRec: ExerciseScoreRecord, key: CryptoKey
     payloadIv: scoreRec.payloadIv,
   };
 
-  if (!key || !scoreRec.payloadCt || !scoreRec.payloadIv) {
+  if (!key || !scoreRec.payloadCt || !scoreRec.payloadIv || scoreRec.payloadCt.byteLength < 16) {
     return baseRecord;
   }
 
@@ -356,7 +356,7 @@ export async function decryptStudent(student: StudentRecord, key: CryptoKey | nu
     payloadIv: student.payloadIv,
   };
 
-  if (!key || !student.payloadCt || !student.payloadIv) {
+  if (!key || !student.payloadCt || !student.payloadIv || student.payloadCt.byteLength < 16) {
     return baseRecord;
   }
 
@@ -424,7 +424,7 @@ export async function decryptSubmission(submission: SubmissionRecord, key: Crypt
     payloadIv: submission.payloadIv,
   };
 
-  if (!key || !submission.payloadCt || !submission.payloadIv) {
+  if (!key || !submission.payloadCt || !submission.payloadIv || submission.payloadCt.byteLength < 16) {
     return baseRecord;
   }
 
@@ -484,7 +484,7 @@ export async function decryptAuditEntry(entry: AuditEntry, key: CryptoKey | null
     payloadIv: entry.payloadIv,
   };
 
-  if (!key || !entry.payloadCt || !entry.payloadIv) {
+  if (!key || !entry.payloadCt || !entry.payloadIv || entry.payloadCt.byteLength < 16) {
     return baseRecord;
   }
 
