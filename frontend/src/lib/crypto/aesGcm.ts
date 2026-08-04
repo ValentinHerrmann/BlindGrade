@@ -1,3 +1,6 @@
+import { get } from 'svelte/store';
+import { sessionStore } from '$lib/stores/session';
+
 /**
  * AES-256-GCM encrypt/decrypt helpers.
  *
@@ -55,36 +58,44 @@ export async function encrypt(key: CryptoKey, plaintext: Uint8Array): Promise<En
  * @throws DOMException if the GCM authentication tag fails (tampered or wrong key/IV).
  */
 export async function decrypt(
-  key: CryptoKey,
+  key: CryptoKey | null | undefined,
   ciphertext: Uint8Array,
   iv: Uint8Array,
   fallbackKey?: CryptoKey | null
 ): Promise<Uint8Array> {
   const ciphertextBuffer = toArrayBuffer(ciphertext);
   const ivBuffer = toArrayBuffer(iv);
+  const activeFallbackKey =
+    fallbackKey ?? (typeof window !== 'undefined' ? get(sessionStore).fallbackSessionKey : null);
 
-  try {
-    const plaintextBuffer = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: ivBuffer },
-      key,
-      ciphertextBuffer
-    );
-    return new Uint8Array(plaintextBuffer);
-  } catch (primaryErr) {
-    if (fallbackKey) {
-      try {
-        const plaintextBuffer = await crypto.subtle.decrypt(
-          { name: 'AES-GCM', iv: ivBuffer },
-          fallbackKey,
-          ciphertextBuffer
-        );
-        return new Uint8Array(plaintextBuffer);
-      } catch {
-        // Fallback also failed, re-throw primary error
-      }
+  let primaryErr: any = null;
+  if (key) {
+    try {
+      const plaintextBuffer = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: ivBuffer },
+        key,
+        ciphertextBuffer
+      );
+      return new Uint8Array(plaintextBuffer);
+    } catch (err) {
+      primaryErr = err;
     }
-    throw primaryErr;
   }
+
+  if (activeFallbackKey) {
+    try {
+      const plaintextBuffer = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: ivBuffer },
+        activeFallbackKey,
+        ciphertextBuffer
+      );
+      return new Uint8Array(plaintextBuffer);
+    } catch {
+      // Fallback also failed, ignore error to throw primary error below
+    }
+  }
+
+  throw primaryErr || new Error('Decryption failed: no valid key provided');
 }
 
 /** Safe Uint8Array to Base64 string converter (chunks array to prevent call stack size exceeded). */

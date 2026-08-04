@@ -186,26 +186,28 @@
     previewLoading = true;
     previewError = "";
 
-    const key = get(sessionStore).sessionKey;
+    const session = get(sessionStore);
+    const key = session.sessionKey;
+    const fallbackKey = session.fallbackSessionKey;
     let scanCt = item.scanCt;
     let scanIv = item.scanIv;
 
     if (!scanCt || !scanIv) {
-      const fullSub = await submissionRepository.getById(examId, item.id, key);
+      const fullSub = await submissionRepository.getById(examId, item.id, key || fallbackKey);
       if (fullSub) {
         scanCt = fullSub.scanCt;
         scanIv = fullSub.scanIv;
       }
     }
 
-    if (!scanCt || !scanIv || !key) {
+    if (!scanCt || !scanIv || (!key && !fallbackKey)) {
       previewLoading = false;
       previewError = "Scan data or session encryption key missing.";
       return;
     }
 
     try {
-      const decryptedBytes = await decrypt(key, scanCt, scanIv);
+      const decryptedBytes = await decrypt(key || fallbackKey, scanCt, scanIv, fallbackKey);
       const isPdf =
         decryptedBytes.length > 4 &&
         decryptedBytes[0] === 0x25 && // %
@@ -352,18 +354,20 @@
   async function handleExportPdf(item: ScannedSubmissionItem) {
     exportingId = item.id;
     try {
-      const key = get(sessionStore).sessionKey;
-      if (!key) throw new Error("Session not unlocked");
+      const session = get(sessionStore);
+      const key = session.sessionKey;
+      const fallbackKey = session.fallbackSessionKey;
+      if (!key && !fallbackKey) throw new Error("Session not unlocked");
 
-      const sub = await submissionRepository.getById(examId, item.id, key);
+      const sub = await submissionRepository.getById(examId, item.id, key || fallbackKey);
       if (!sub?.scanCt || !sub.scanIv) throw new Error("Scan data not found");
 
-      const scanBytes = await decrypt(key, sub.scanCt, sub.scanIv);
+      const scanBytes = await decrypt(key || fallbackKey, sub.scanCt, sub.scanIv, fallbackKey);
 
       // Load annotations
       let strokes: any[] = [];
       if (sub.annotationCt && sub.annotationIv) {
-        const annBytes = await decrypt(key, sub.annotationCt, sub.annotationIv);
+        const annBytes = await decrypt(key || fallbackKey, sub.annotationCt, sub.annotationIv, fallbackKey);
         strokes = JSON.parse(new TextDecoder().decode(annBytes));
       }
 
@@ -382,7 +386,7 @@
       // Helper: load Uint8Array as HTMLImageElement
       const loadImageFromBytes = (bytes: Uint8Array): Promise<HTMLImageElement> =>
         new Promise((resolve, reject) => {
-          const blob = new Blob([bytes], { type: "image/png" });
+          const blob = new Blob([bytes as unknown as BlobPart], { type: "image/png" });
           const url = URL.createObjectURL(blob);
           const img = new Image();
           img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
