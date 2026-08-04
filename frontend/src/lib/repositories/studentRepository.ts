@@ -126,6 +126,25 @@ export const studentRepository = {
     await db.students.delete(pseudonymId);
     await db.students.delete(pseudonymHmac);
 
+    // Also search local students by examId or full list to catch raw UUID keys matching the HMAC
+    try {
+      const candidates = examId
+        ? await db.students.where('examId').equals(examId).toArray()
+        : await db.students.toArray();
+      for (const st of candidates) {
+        if (!st.pseudonymId) continue;
+        if (
+          st.pseudonymId === pseudonymId ||
+          st.pseudonymId === pseudonymHmac ||
+          (await ensure64CharHex(st.pseudonymId)) === pseudonymHmac
+        ) {
+          await db.students.delete(st.pseudonymId);
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to clean up matching student records from IndexedDB:', err);
+    }
+
     const policy = get(storagePolicyStore);
     if (policy.storageMode === 'all-server') {
       const url = examId ? `/exams/${examId}/students/${pseudonymHmac}` : `/students/${pseudonymHmac}`;

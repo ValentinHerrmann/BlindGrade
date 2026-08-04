@@ -541,10 +541,33 @@
   async function refreshUnmatched() {
     const key = get(sessionStore).sessionKey;
     const students = await studentRepository.getByExamId(examId, key);
-    const unmatched = students.filter((s) =>
-      s.fallbackCode && s.fallbackCode.startsWith("UNMATCHED-"),
-    );
-    unmatchedList = unmatched.map((s) => ({
+    const submissions = await submissionRepository.getByExamId(examId, key);
+
+    const activeHashes = new Set<string>();
+    for (const sub of submissions) {
+      if (sub.pseudonymHash) {
+        activeHashes.add(sub.pseudonymHash);
+        activeHashes.add(await ensure64CharHex(sub.pseudonymHash));
+      }
+    }
+
+    const validUnmatched: StudentRecord[] = [];
+    for (const s of students) {
+      if (!s.fallbackCode || !s.fallbackCode.startsWith("UNMATCHED-")) continue;
+      const hmac = s.pseudonymId ? await ensure64CharHex(s.pseudonymId) : "";
+      const isLinkedToSubmission =
+        (s.pseudonymId && activeHashes.has(s.pseudonymId)) ||
+        (hmac && activeHashes.has(hmac));
+
+      if (isLinkedToSubmission) {
+        validUnmatched.push(s);
+      } else if (s.pseudonymId) {
+        // Clean up orphaned unmatched student identity
+        await studentRepository.delete(examId, s.pseudonymId);
+      }
+    }
+
+    unmatchedList = validUnmatched.map((s) => ({
       submissionId: s.pseudonymId,
       studentId: s.pseudonymId,
       currentFallback: s.fallbackCode || "",
