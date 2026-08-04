@@ -384,6 +384,7 @@ export async function encryptStudent(student: StudentRecord, key: CryptoKey | nu
   return {
     pseudonymId: student.pseudonymId,
     examId: student.examId,
+    fallbackCode: student.fallbackCode,
     studentName: student.studentName,
     studentNumber: student.studentNumber,
     piiCt: student.piiCt,
@@ -417,8 +418,7 @@ export async function decryptStudent(student: StudentRecord, key: CryptoKey | nu
       ...baseRecord,
       ...payload,
     };
-  } catch (err) {
-    console.error('Failed to decrypt student record payload:', err);
+  } catch {
     return baseRecord;
   }
 }

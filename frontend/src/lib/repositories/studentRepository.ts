@@ -55,18 +55,34 @@ export const studentRepository = {
         const localRaw = await db.students.where('examId').equals(examId).toArray();
         const localStudents = await Promise.all(localRaw.map((st) => decryptStudent(st, key)));
         const combinedMap = new Map<string, StudentRecord>();
-        for (const st of serverStudents) combinedMap.set(st.pseudonymId, st);
+        const hmacToKeyMap = new Map<string, string>();
+
+        for (const st of serverStudents) {
+          combinedMap.set(st.pseudonymId, st);
+          hmacToKeyMap.set(st.pseudonymId, st.pseudonymId);
+        }
+
         for (const st of localStudents) {
-          if (!combinedMap.has(st.pseudonymId)) {
+          const localHmac = await ensure64CharHex(st.pseudonymId);
+          const existingKey = combinedMap.has(st.pseudonymId)
+            ? st.pseudonymId
+            : hmacToKeyMap.get(localHmac);
+
+          if (!existingKey) {
             combinedMap.set(st.pseudonymId, st);
+            hmacToKeyMap.set(localHmac, st.pseudonymId);
           } else {
-            const existing = combinedMap.get(st.pseudonymId)!;
-            combinedMap.set(st.pseudonymId, {
+            const existing = combinedMap.get(existingKey)!;
+            const merged: StudentRecord = {
               ...existing,
-              studentName: existing.studentName || st.studentName,
-              studentNumber: existing.studentNumber || st.studentNumber,
-              fallbackCode: existing.fallbackCode || st.fallbackCode,
-            });
+              pseudonymId: st.pseudonymId || existing.pseudonymId,
+              studentName: st.studentName || existing.studentName,
+              studentNumber: st.studentNumber || existing.studentNumber,
+              fallbackCode: st.fallbackCode || existing.fallbackCode,
+            };
+            combinedMap.delete(existingKey);
+            combinedMap.set(merged.pseudonymId, merged);
+            hmacToKeyMap.set(localHmac, merged.pseudonymId);
           }
         }
         return Array.from(combinedMap.values());
@@ -97,15 +113,26 @@ export const studentRepository = {
     }
   },
 
-  async delete(pseudonymId: string): Promise<void> {
+  async delete(examIdOrPseudonymId: string, pseudonymIdArg?: string): Promise<void> {
+    let examId = examIdOrPseudonymId;
+    let pseudonymId = pseudonymIdArg;
+    if (!pseudonymId) {
+      pseudonymId = examIdOrPseudonymId;
+      examId = '';
+    }
+    const pseudonymHmac = await ensure64CharHex(pseudonymId);
+
+    // Delete locally from IndexedDB in all modes to keep local state clean
+    await db.students.delete(pseudonymId);
+    await db.students.delete(pseudonymHmac);
+
     const policy = get(storagePolicyStore);
-    if (policy.storageMode === 'all-local' || policy.storageMode === 'hybrid') {
-      await db.students.delete(pseudonymId);
-    } else {
+    if (policy.storageMode === 'all-server') {
+      const url = examId ? `/exams/${examId}/students/${pseudonymHmac}` : `/students/${pseudonymHmac}`;
       try {
-        await api.delete(`/students/${pseudonymId}`);
+        await api.delete(url);
       } catch {
-        enqueueRequest(`/students/${pseudonymId}`, 'DELETE');
+        enqueueRequest(url, 'DELETE');
       }
     }
   },

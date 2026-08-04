@@ -242,6 +242,9 @@
     if (!confirm("Are you sure you want to delete this scan submission?")) return;
     try {
       await submissionRepository.delete(examId, item.id);
+      // Also remove the associated student record to prevent orphaned UNMATCHED entries
+      await studentRepository.delete(examId, item.pseudonymHash);
+      await refreshUnmatched();
       await loadScannedSubmissions();
     } catch (err: any) {
       alert(`Failed to delete scan: ${err?.message || err}`);
@@ -485,6 +488,8 @@
     try {
       for (const item of scannedSubmissions) {
         await submissionRepository.delete(examId, item.id);
+        // Also remove the associated student record to prevent orphaned UNMATCHED entries
+        await studentRepository.delete(examId, item.pseudonymHash);
       }
       await refreshUnmatched();
       await loadScannedSubmissions();
@@ -629,64 +634,81 @@
       }
     }
 
-    // --- HELPER: Process Single Page ---
-    async function processScannedPage(fileName: string, imageData: ImageData, pageRef: PdfPageRef) {
-      processedPages++;
-      progress = Math.round((processedPages / Math.max(totalPagesCount, 1)) * 50);
-      statusText = `Scanning page ${processedPages} of ${totalPagesCount}: ${fileName}`;
-
-      let qrResult: QrWorkerResponse | null = null;
-      if (qrPool) {
-        try {
-          const res = await qrPool.dispatch({
-            type: "QR_DECODE",
-            imageData: imageData,
-          });
-          if (res.type === "QR_RESULT") {
-            qrResult = res;
-          }
-        } catch {
-          // No QR on this page
-        }
-      }
-
-      if (qrResult) {
-        const pseudoId: string = qrResult.pseudonymId;
-        const parsedStudent = parseStudentQr(pseudoId) || (qrResult.rawText ? parseStudentQr(qrResult.rawText) : null);
-        const fallbackCode =
-          (parsedStudent ? parsedStudent.displayName : null) ||
-          qrResult.fallbackCode ||
-          `F-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
-
-        booklets.push({
-          pseudonymId: pseudoId,
-          fallbackCode,
-          studentName: parsedStudent?.displayName,
-          studentNumber: parsedStudent?.studentNumber,
-          isUnmatched: false,
-          pageRefs: [pageRef],
-        });
-      } else {
-        if (booklets.length > 0) {
-          booklets[booklets.length - 1].pageRefs.push(pageRef);
-        } else {
-          const pseudoId: string = crypto.randomUUID();
-          booklets.push({
-            pseudonymId: pseudoId,
-            fallbackCode: `UNMATCHED-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
-            isUnmatched: true,
-            pageRefs: [pageRef],
-          });
-        }
-      }
-
-      monitor?.checkMemoryHealth();
-    }
-
     // --- PASS 2: Extract & Process Iteratively ---
+    let currentBooklet: StudentBooklet | null = null;
+
     for (let i = 0; i < fileInfos.length; i++) {
       const info = fileInfos[i];
       const fileName = info.file.name;
+
+      // --- HELPER: Process Single Page ---
+      async function processScannedPage(fileName: string, imageData: ImageData, pageRef: PdfPageRef) {
+        processedPages++;
+        progress = Math.round((processedPages / Math.max(totalPagesCount, 1)) * 50);
+        statusText = `Scanning page ${processedPages} of ${totalPagesCount}: ${fileName}`;
+
+        let qrResult: QrWorkerResponse | null = null;
+        if (qrPool) {
+          try {
+            const res = await qrPool.dispatch({
+              type: "QR_DECODE",
+              imageData: imageData,
+            });
+            if (res.type === "QR_RESULT") {
+              qrResult = res;
+            }
+          } catch {
+            // No QR on this page
+          }
+        }
+
+        if (qrResult) {
+          const pseudoId: string = qrResult.pseudonymId;
+          const parsedStudent = parseStudentQr(pseudoId) || (qrResult.rawText ? parseStudentQr(qrResult.rawText) : null);
+          const fallbackCode =
+            (parsedStudent ? parsedStudent.displayName : null) ||
+            qrResult.fallbackCode ||
+            `F-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+
+          if (currentBooklet && currentBooklet.pseudonymId === pseudoId) {
+            currentBooklet.pageRefs.push(pageRef);
+          } else {
+            const existingBooklet = booklets.find((b) => b.pseudonymId === pseudoId);
+            if (existingBooklet) {
+              currentBooklet = existingBooklet;
+              currentBooklet.pageRefs.push(pageRef);
+            } else {
+              const newBooklet: StudentBooklet = {
+                pseudonymId: pseudoId,
+                fallbackCode,
+                studentName: parsedStudent?.displayName,
+                studentNumber: parsedStudent?.studentNumber,
+                isUnmatched: false,
+                pageRefs: [pageRef],
+              };
+              booklets.push(newBooklet);
+              currentBooklet = newBooklet;
+            }
+          }
+        } else {
+          // No QR code detected on this page: append to current active booklet or start unmatched booklet
+          if (currentBooklet) {
+            currentBooklet.pageRefs.push(pageRef);
+          } else {
+            const pseudoId: string = crypto.randomUUID();
+            const newBooklet: StudentBooklet = {
+              pseudonymId: pseudoId,
+              fallbackCode: `UNMATCHED-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+              isUnmatched: true,
+              pageRefs: [pageRef],
+            };
+            booklets.push(newBooklet);
+            currentBooklet = newBooklet;
+          }
+        }
+
+        monitor?.checkMemoryHealth();
+      }
 
       if (info.type === "pdf") {
         const pdfJsDoc = info.pdf;
@@ -799,6 +821,10 @@
       const rawSt = await db.students.get(item.studentId);
       if (rawSt) st = await decryptStudent(rawSt, key);
     }
+    if (!st) {
+      const itemHmac = await ensure64CharHex(item.studentId);
+      st = students.find((s) => s.pseudonymId === itemHmac);
+    }
     if (st) {
       st.fallbackCode = code;
       const parsed = parseStudentQr(code);
@@ -810,6 +836,126 @@
       await refreshUnmatched();
       await loadScannedSubmissions();
       alert(`Updated fallback code to "${st.fallbackCode}"`);
+    }
+  }
+
+  async function handleSplitSubmission(item: ScannedSubmissionItem) {
+    const input = prompt("Enter the 1-based page number where the second submission begins (e.g. enter 3 to split pages 1-2 into Submission 1 and pages 3+ into Submission 2):");
+    if (!input) return;
+    const splitPage = parseInt(input, 10);
+    if (isNaN(splitPage) || splitPage <= 1) {
+      alert("Invalid page number. Split page must be 2 or greater.");
+      return;
+    }
+
+    const session = get(sessionStore);
+    const key = session.sessionKey;
+    const fallbackKey = session.fallbackSessionKey;
+    let scanCt = item.scanCt;
+    let scanIv = item.scanIv;
+
+    if (!scanCt || !scanIv) {
+      const fullSub = await submissionRepository.getById(examId, item.id, key || fallbackKey);
+      if (fullSub) {
+        scanCt = fullSub.scanCt;
+        scanIv = fullSub.scanIv;
+      }
+    }
+
+    if (!scanCt || !scanIv || (!key && !fallbackKey)) {
+      alert("Scan data or session encryption key missing. Cannot split scan.");
+      return;
+    }
+
+    try {
+      const activeKey = key || fallbackKey;
+      const decryptedBytes = await decrypt(activeKey, scanCt, scanIv, fallbackKey);
+
+      const { PDFDocument } = await import("pdf-lib");
+      const srcPdf = await PDFDocument.load(decryptedBytes, { ignoreEncryption: true });
+      const totalPages = srcPdf.getPageCount();
+
+      if (splitPage > totalPages) {
+        alert(`Cannot split at page ${splitPage}: scan PDF only has ${totalPages} page(s).`);
+        return;
+      }
+
+      // PDF 1: pages 0 to splitPage - 2
+      const pdf1 = await PDFDocument.create();
+      const indices1 = Array.from({ length: splitPage - 1 }, (_, i) => i);
+      const copied1 = await pdf1.copyPages(srcPdf, indices1);
+      copied1.forEach((p) => pdf1.addPage(p));
+      const buf1 = await pdf1.save();
+
+      // PDF 2: pages splitPage - 1 to totalPages - 1
+      const pdf2 = await PDFDocument.create();
+      const indices2 = Array.from({ length: totalPages - splitPage + 1 }, (_, i) => i + splitPage - 1);
+      const copied2 = await pdf2.copyPages(srcPdf, indices2);
+      copied2.forEach((p) => pdf2.addPage(p));
+      const buf2 = await pdf2.save();
+
+      let enc1Ct: Uint8Array | undefined;
+      let enc1Iv: Uint8Array | undefined;
+      let enc2Ct: Uint8Array | undefined;
+      let enc2Iv: Uint8Array | undefined;
+
+      if (activeKey) {
+        const enc1 = await encrypt(activeKey, buf1);
+        enc1Ct = enc1.ciphertext;
+        enc1Iv = enc1.iv;
+
+        const enc2 = await encrypt(activeKey, buf2);
+        enc2Ct = enc2.ciphertext;
+        enc2Iv = enc2.iv;
+      }
+
+      // Update existing submission with Part 1
+      await saveSubmissionEncrypted(
+        {
+          id: item.id,
+          examId,
+          pseudonymHash: item.pseudonymHash,
+          scanCt: enc1Ct,
+          scanIv: enc1Iv || new Uint8Array(12),
+          createdAt: item.createdAt,
+        },
+        activeKey,
+      );
+
+      // Create new unmatched student & submission record for Part 2
+      const part2PseudoId = crypto.randomUUID();
+      const part2Fallback = `UNMATCHED-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+
+      await saveStudentEncrypted(
+        {
+          pseudonymId: part2PseudoId,
+          examId,
+          fallbackCode: part2Fallback,
+          piiCt: new Uint8Array([0]),
+          piiIv: new Uint8Array(12),
+        },
+        activeKey,
+      );
+
+      const part2SubId = crypto.randomUUID();
+      await saveSubmissionEncrypted(
+        {
+          id: part2SubId,
+          examId,
+          pseudonymHash: part2PseudoId,
+          scanCt: enc2Ct,
+          scanIv: enc2Iv || new Uint8Array(12),
+          createdAt: new Date().toISOString(),
+        },
+        activeKey,
+      );
+
+      await refreshUnmatched();
+      await loadScannedSubmissions();
+      alert(`Split submission into 2 PDFs (Pages 1–${splitPage - 1} and Pages ${splitPage}–${totalPages})!`);
+    } catch (err: any) {
+      console.error("Split submission failed:", err);
+      alert(`Failed to split submission: ${err?.message || err}`);
     }
   }
 </script>
@@ -923,6 +1069,7 @@
               <button class="btn-export" disabled={exportingId === item.id} on:click={() => handleExportPdf(item)}>
                 {exportingId === item.id ? 'Exporting…' : 'Export PDF'}
               </button>
+              <button class="btn-split" on:click={() => handleSplitSubmission(item)}>Split</button>
               <button class="btn-delete-grading" disabled={!isGraded(item)} on:click={() => handleDeleteGrading(item)}>Delete Grading</button>
               <button class="btn-delete" on:click={() => handleDeleteScan(item)}>Delete</button>
             </div>
@@ -1224,6 +1371,22 @@
 
   .btn-preview:hover {
     background: #0369a1;
+  }
+
+  .btn-split {
+    padding: 0.4rem 0.8rem;
+    background: #d97706;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.8rem;
+    transition: background 0.2s ease;
+  }
+
+  .btn-split:hover {
+    background: #b45309;
   }
 
   .btn-delete {
