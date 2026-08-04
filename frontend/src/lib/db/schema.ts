@@ -116,8 +116,9 @@ export interface SubmissionRecord {
   /** HMAC(pseudonymId, archiveSecret) — links to StudentRecord without exposing raw ID. */
   pseudonymHash: string;
   totalScore?: number;
-  /** AES-256-GCM ciphertext of scan image blob. */
+  /** AES-256-GCM ciphertext of scan PDF bytes (native PDF with preserved page structure). */
   scanCt?: Uint8Array;
+  /** AES-256-GCM IV for scanCt. */
   scanIv?: Uint8Array;
   /** AES-256-GCM ciphertext of annotation JSON vector layer. */
   annotationCt?: Uint8Array;

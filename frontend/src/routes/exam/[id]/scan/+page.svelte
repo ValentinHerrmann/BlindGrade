@@ -32,6 +32,7 @@
   import { parseStudentQr } from "$lib/utils/studentQr";
   import ZoomableImage from "$lib/components/ZoomableImage.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+  import type { PDFDocument, PDFPage } from "pdf-lib";
 
   const examId = $page.params.id || "";
 
@@ -53,6 +54,11 @@
     studentId: string;
     currentFallback: string;
     newCode: string;
+  }
+
+  interface PdfPageRef {
+    doc: PDFDocument;
+    index: number;
   }
 
   interface ScannedSubmissionItem {
@@ -586,7 +592,7 @@
       studentName?: string;
       studentNumber?: string;
       isUnmatched: boolean;
-      pageBuffers: Uint8Array[];
+      pageRefs: PdfPageRef[];
     }
 
     const booklets: StudentBooklet[] = [];
@@ -620,7 +626,7 @@
     }
 
     // --- HELPER: Process Single Page ---
-    async function processScannedPage(fileName: string, imageData: ImageData, buffer: Uint8Array) {
+    async function processScannedPage(fileName: string, imageData: ImageData, pageRef: PdfPageRef) {
       processedPages++;
       progress = Math.round((processedPages / Math.max(totalPagesCount, 1)) * 50);
       statusText = `Scanning page ${processedPages} of ${totalPagesCount}: ${fileName}`;
@@ -654,18 +660,18 @@
           studentName: parsedStudent?.displayName,
           studentNumber: parsedStudent?.studentNumber,
           isUnmatched: false,
-          pageBuffers: [buffer],
+          pageRefs: [pageRef],
         });
       } else {
         if (booklets.length > 0) {
-          booklets[booklets.length - 1].pageBuffers.push(buffer);
+          booklets[booklets.length - 1].pageRefs.push(pageRef);
         } else {
           const pseudoId: string = crypto.randomUUID();
           booklets.push({
             pseudonymId: pseudoId,
             fallbackCode: `UNMATCHED-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
             isUnmatched: true,
-            pageBuffers: [buffer],
+            pageRefs: [pageRef],
           });
         }
       }
@@ -679,9 +685,16 @@
       const fileName = info.file.name;
 
       if (info.type === "pdf") {
-        const pdf = info.pdf;
-        for (let pIdx = 1; pIdx <= pdf.numPages; pIdx++) {
-          const page = await pdf.getPage(pIdx);
+        const pdfJsDoc = info.pdf;
+
+        // Load the same file with pdf-lib for page copying
+        const fileBytes = await info.file.arrayBuffer();
+        const { PDFDocument: PDFDocClass } = await import("pdf-lib");
+        const pdfLibDoc = await PDFDocClass.load(fileBytes, { ignoreEncryption: true });
+        const numPages = pdfJsDoc.numPages;
+
+        for (let pIdx = 1; pIdx <= numPages; pIdx++) {
+          const page = await pdfJsDoc.getPage(pIdx);
           const viewport = page.getViewport({ scale: 2.0 }); // ~200 DPI
           const canvas = document.createElement("canvas");
           canvas.width = viewport.width;
@@ -691,46 +704,40 @@
 
           const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
-          const blob: Blob | null = await new Promise((res) =>
-            canvas.toBlob((b) => res(b), "image/png"),
-          );
-
-          if (!blob) {
-            alert(`Error: Canvas out of memory on page ${pIdx} of ${fileName}. Try importing fewer files or close other tabs.`);
-            throw new Error("Canvas toBlob failed (null)");
-          }
-
-          const buffer = new Uint8Array(await blob.arrayBuffer());
+          // Reference the page in the pdf-lib document (0-based index)
+          const pageRef: PdfPageRef = { doc: pdfLibDoc, index: pIdx - 1 };
 
           // Scan and group immediately, dropping imageData after use
-          await processScannedPage(fileName, imageData, buffer);
+          await processScannedPage(fileName, imageData, pageRef);
 
           // Clean up page resources
           page.cleanup();
         }
 
-        // Clean up PDF resources
+        // Clean up PDF.js resources
         await info.loadingTask.destroy();
         URL.revokeObjectURL(info.fileUrl);
 
       } else {
-        // Handle Image
-        try {
-          const { imageData, buffer } = await loadImageData(info.file);
-          await processScannedPage(fileName, imageData, buffer);
-        } catch (imgErr) {
-          console.error("Failed to load image file:", imgErr);
-        }
+        // Image files are no longer supported — skip with warning
+        console.warn(`Skipping unsupported file type (image): ${fileName}. Only PDF files are supported.`);
       }
     }
 
     let newlyIngestedCount = 0;
     for (let bIdx = 0; bIdx < booklets.length; bIdx++) {
       const booklet = booklets[bIdx];
-      statusText = `Saving student booklet ${bIdx + 1} of ${booklets.length} (${booklet.pageBuffers.length} page(s))...`;
+      statusText = `Saving student booklet ${bIdx + 1} of ${booklets.length} (${booklet.pageRefs.length} page(s))...`;
       progress = 50 + Math.round(((bIdx + 1) / Math.max(booklets.length, 1)) * 50);
 
-      const scanBuffer = await combinePageBuffers(booklet.pageBuffers);
+      // Assemble a new PDF by copying pages from the source documents
+      const { PDFDocument: PDFDocClass } = await import("pdf-lib");
+      const assembledPdf = await PDFDocClass.create();
+      for (const ref of booklet.pageRefs) {
+        const copiedPages = await assembledPdf.copyPages(ref.doc, [ref.index]);
+        assembledPdf.addPage(copiedPages[0]);
+      }
+      const scanBuffer = await assembledPdf.save();
 
       let scanCt: Uint8Array | undefined;
       let scanIv: Uint8Array | undefined;
@@ -832,11 +839,11 @@
       type="file"
       id="scanFiles"
       multiple
-      accept="image/*,application/pdf"
+      accept="application/pdf"
       on:change={handleFileUpload}
       disabled={isProcessing}
     />
-    <label for="scanFiles">Select Scan Files (PNG / JPEG / PDF)</label>
+    <label for="scanFiles">Select Scan Files (PDF only)</label>
   </div>
 
   {#if isProcessing}

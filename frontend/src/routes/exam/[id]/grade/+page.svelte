@@ -19,6 +19,7 @@
   import { storagePolicyStore } from "$lib/stores/storagePolicy";
   import { decrypt, encrypt } from "$lib/crypto/aesGcm";
   import { get } from "svelte/store";
+  import type { PDFPageProxy } from "pdfjs-dist";
 
   const examId = $page.params.id || "";
 
@@ -73,6 +74,13 @@
 
   let currentStrokes: VectorStroke[] = [];
   let loadedSubId: string | null = null;
+
+  // PDF page navigation state
+  let pdfDoc: any = null;
+  let currentPage = 1;
+  let totalPages = 1;
+  let pdfBytes: Uint8Array | null = null;
+  let isScanPdf = false;
 
   $: currentSub = submissions[currentIndex];
 
@@ -263,6 +271,13 @@
     ctx.clearRect(0, 0, scanCanvas.width, scanCanvas.height);
     overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
 
+    // Reset PDF state
+    pdfDoc = null;
+    pdfBytes = null;
+    isScanPdf = false;
+    currentPage = 1;
+    totalPages = 1;
+
     const key = get(sessionStore).sessionKey;
     if ((!sub.scanCt || !sub.scanIv || !sub.annotationCt) && key) {
       const fullSub = await submissionRepository.getById(examId, sub.id, key);
@@ -294,54 +309,102 @@
         sub.scanIv,
         $sessionStore.fallbackSessionKey
       );
-      const blob = new Blob([decryptedBytes.buffer as ArrayBuffer], {
-        type: "image/png",
-      });
-      const url = URL.createObjectURL(blob);
 
-      const img = new Image();
-      img.onload = () => {
-        const tempCanvas = document.createElement("canvas");
-        tempCanvas.width = img.width;
-        tempCanvas.height = img.height;
-        const tempCtx = tempCanvas.getContext("2d")!;
-        tempCtx.drawImage(img, 0, 0);
+      // Detect format: PDF or PNG
+      const isPdf =
+        decryptedBytes.length > 4 &&
+        decryptedBytes[0] === 0x25 &&
+        decryptedBytes[1] === 0x50 &&
+        decryptedBytes[2] === 0x44 &&
+        decryptedBytes[3] === 0x46;
 
-        let crop = { x: 0, y: 0, w: img.width, h: img.height };
-        if (isAutoCropEnabled) {
-          crop = getAutoCropBounds(tempCtx, img.width, img.height);
+      if (isPdf) {
+        // PDF path: load with pdf.js and render current page
+        isScanPdf = true;
+        pdfBytes = decryptedBytes;
+
+        const pdfjsLib = await import("pdfjs-dist");
+        if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+          pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
         }
 
-        scanCanvas.width = crop.w;
-        scanCanvas.height = crop.h;
-        overlayCanvas.width = crop.w;
-        overlayCanvas.height = crop.h;
+        pdfDoc = await pdfjsLib.getDocument({ data: decryptedBytes }).promise;
+        totalPages = pdfDoc.numPages;
+        currentPage = 1;
 
-        ctx.drawImage(img, crop.x, crop.y, crop.w, crop.h, 0, 0, crop.w, crop.h);
-        URL.revokeObjectURL(url);
-        tick().then(() => fitToPage());
+        await renderCurrentPage();
 
-        // Load encrypted annotations vector if available
+        // Load annotations
         if (sub.annotationCt && sub.annotationIv && $sessionStore.sessionKey) {
-          decrypt(
+          const annBytes = await decrypt(
             $sessionStore.sessionKey,
             sub.annotationCt,
             sub.annotationIv,
             $sessionStore.fallbackSessionKey
-          ).then((annBytes) => {
-            const jsonStr = new TextDecoder().decode(annBytes);
-            currentStrokes = JSON.parse(jsonStr);
-            redrawOverlay();
-            if (currentStrokes.some((s) => s.tool !== "pen" && s.tool !== "line" && s.tool !== "eraser")) {
-              recalculateAutoScores();
-            }
-          });
+          );
+          const jsonStr = new TextDecoder().decode(annBytes);
+          currentStrokes = JSON.parse(jsonStr);
+          redrawOverlay();
+          if (currentStrokes.some((s) => s.tool !== "pen" && s.tool !== "line" && s.tool !== "eraser")) {
+            recalculateAutoScores();
+          }
         } else {
           currentStrokes = [];
           redrawOverlay();
         }
-      };
-      img.src = url;
+      } else {
+        // PNG/image path (legacy submissions)
+        isScanPdf = false;
+        totalPages = 1;
+        currentPage = 1;
+
+        const blob = new Blob([decryptedBytes.buffer as ArrayBuffer], { type: "image/png" });
+        const url = URL.createObjectURL(blob);
+
+        const img = new Image();
+        img.onload = () => {
+          const tempCanvas = document.createElement("canvas");
+          tempCanvas.width = img.width;
+          tempCanvas.height = img.height;
+          const tempCtx = tempCanvas.getContext("2d")!;
+          tempCtx.drawImage(img, 0, 0);
+
+          let crop = { x: 0, y: 0, w: img.width, h: img.height };
+          if (isAutoCropEnabled) {
+            crop = getAutoCropBounds(tempCtx, img.width, img.height);
+          }
+
+          scanCanvas.width = crop.w;
+          scanCanvas.height = crop.h;
+          overlayCanvas.width = crop.w;
+          overlayCanvas.height = crop.h;
+
+          ctx.drawImage(img, crop.x, crop.y, crop.w, crop.h, 0, 0, crop.w, crop.h);
+          URL.revokeObjectURL(url);
+          tick().then(() => fitToPage());
+
+          // Load annotations
+          if (sub.annotationCt && sub.annotationIv && $sessionStore.sessionKey) {
+            decrypt(
+              $sessionStore.sessionKey,
+              sub.annotationCt,
+              sub.annotationIv,
+              $sessionStore.fallbackSessionKey
+            ).then((annBytes) => {
+              const jsonStr = new TextDecoder().decode(annBytes);
+              currentStrokes = JSON.parse(jsonStr);
+              redrawOverlay();
+              if (currentStrokes.some((s) => s.tool !== "pen" && s.tool !== "line" && s.tool !== "eraser")) {
+                recalculateAutoScores();
+              }
+            });
+          } else {
+            currentStrokes = [];
+            redrawOverlay();
+          }
+        };
+        img.src = url;
+      }
     } catch (err) {
       console.error("Failed to decrypt scan for grading:", err);
       if (scanCanvas && overlayCanvas) {
@@ -355,6 +418,36 @@
         ctx.font = "16px sans-serif";
         ctx.fillText("[ Scan Decryption Failed — Key Mismatch or Data Corrupted ]", 80, 400);
       }
+    }
+  }
+
+  async function renderCurrentPage() {
+    if (!pdfDoc || !scanCanvas || !overlayCanvas) return;
+    const ctx = scanCanvas.getContext("2d")!;
+    const pdfPage = await pdfDoc.getPage(currentPage);
+    const viewport = pdfPage.getViewport({ scale: 2 });
+
+    scanCanvas.width = viewport.width;
+    scanCanvas.height = viewport.height;
+    overlayCanvas.width = viewport.width;
+    overlayCanvas.height = viewport.height;
+
+    await pdfPage.render({ canvasContext: ctx, canvas: scanCanvas, viewport } as any).promise;
+    tick().then(() => fitToPage());
+    redrawOverlay();
+  }
+
+  function goPagePrev() {
+    if (currentPage > 1) {
+      currentPage--;
+      renderCurrentPage();
+    }
+  }
+
+  function goPageNext() {
+    if (currentPage < totalPages) {
+      currentPage++;
+      renderCurrentPage();
     }
   }
 
@@ -920,6 +1013,24 @@
 
         <!-- Floating Zoom & Controls Overlay -->
         <div class="floating-zoom-overlay">
+          {#if isScanPdf && totalPages > 1}
+            <button
+              type="button"
+              class="zoom-btn"
+              on:click={goPagePrev}
+              disabled={currentPage <= 1}
+              title="Vorherige Seite (Pfeil links)"
+            >◀</button>
+            <span class="page-indicator">S. {currentPage}/{totalPages}</span>
+            <button
+              type="button"
+              class="zoom-btn"
+              on:click={goPageNext}
+              disabled={currentPage >= totalPages}
+              title="Nächste Seite (Pfeil rechts)"
+            >▶</button>
+            <div class="zoom-divider"></div>
+          {/if}
           <button
             type="button"
             class="zoom-btn"
