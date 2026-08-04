@@ -425,8 +425,9 @@
 
           await pdfPage.render({ canvasContext: ctx, canvas, viewport } as any).promise;
 
-          if (strokes.length > 0) {
-            drawStrokesOnCanvas(ctx, strokes);
+          const pageStrokes = strokes.filter((s: any) => (s.pageNumber ?? 1) === pageNum);
+          if (pageStrokes.length > 0) {
+            drawStrokesOnCanvas(ctx, pageStrokes);
           }
 
           const pngBytes = await canvasToPng(canvas);
@@ -444,8 +445,9 @@
         const ctx = canvas.getContext("2d")!;
         ctx.drawImage(img, 0, 0);
 
-        if (strokes.length > 0) {
-          drawStrokesOnCanvas(ctx, strokes);
+        const pageStrokes = strokes.filter((s: any) => (s.pageNumber ?? 1) === 1);
+        if (pageStrokes.length > 0) {
+          drawStrokesOnCanvas(ctx, pageStrokes);
         }
 
         const pngBytes = await canvasToPng(canvas);

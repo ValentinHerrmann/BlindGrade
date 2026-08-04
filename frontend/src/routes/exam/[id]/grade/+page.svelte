@@ -70,6 +70,7 @@
     points: { x: number; y: number }[];
     color: string;
     exerciseId?: string;
+    pageNumber?: number;
   }
 
   let currentStrokes: VectorStroke[] = [];
@@ -439,6 +440,8 @@
 
   function goPagePrev() {
     if (currentPage > 1) {
+      isDrawing = false;
+      isErasing = false;
       currentPage--;
       renderCurrentPage();
     }
@@ -446,6 +449,8 @@
 
   function goPageNext() {
     if (currentPage < totalPages) {
+      isDrawing = false;
+      isErasing = false;
       currentPage++;
       renderCurrentPage();
     }
@@ -457,11 +462,16 @@
     let erasedAny = false;
 
     for (const stroke of currentStrokes) {
-      const isHit = stroke.points.some(
-        (p) => Math.hypot(p.x - x, p.y - y) <= radius
-      );
-      if (isHit) {
-        erasedAny = true;
+      const strokePage = stroke.pageNumber ?? 1;
+      if (strokePage === currentPage) {
+        const isHit = stroke.points.some(
+          (p) => Math.hypot(p.x - x, p.y - y) <= radius
+        );
+        if (isHit) {
+          erasedAny = true;
+        } else {
+          remainingStrokes.push(stroke);
+        }
       } else {
         remainingStrokes.push(stroke);
       }
@@ -509,6 +519,7 @@
         points: [{ x, y }, { x, y }],
         color: penColor,
         exerciseId: activeExerciseId || (exercises[0] ? exercises[0].id : undefined),
+        pageNumber: currentPage,
       });
       sessionStore.setDirty(true);
       return;
@@ -523,6 +534,7 @@
         points: [{ x, y }],
         color,
         exerciseId: targetEx ? targetEx.id : undefined,
+        pageNumber: currentPage,
       });
 
       recalculateAutoScores();
@@ -537,6 +549,7 @@
       points: [{ x, y }],
       color: penColor,
       exerciseId: activeExerciseId || (exercises[0] ? exercises[0].id : undefined),
+      pageNumber: currentPage,
     });
     sessionStore.setDirty(true);
   }
@@ -639,7 +652,11 @@
     const ctx = overlayCanvas.getContext("2d")!;
     ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
 
-    for (const stroke of currentStrokes) {
+    const visibleStrokes = currentStrokes.filter(
+      (stroke) => (stroke.pageNumber ?? 1) === currentPage
+    );
+
+    for (const stroke of visibleStrokes) {
       ctx.strokeStyle = "#ef4444";
       ctx.fillStyle = "#ef4444";
       ctx.lineWidth = 4;
