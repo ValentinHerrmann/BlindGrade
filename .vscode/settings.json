@@ -4,5 +4,18 @@
   "python.testing.pytestArgs": ["backend/tests"],
   "python.analysis.extraPaths": ["${workspaceFolder}/backend"],
   "svelte.enable-ts-plugin": true,
-  "makefile.configureOnOpen": false
+  "makefile.configureOnOpen": false,
+  "sqltools.connections": [
+    {
+      "ssh": "Disabled",
+      "previewLimit": 50,
+      "server": "localhost",
+      "port": 5432,
+      "driver": "PostgreSQL",
+      "name": "Examance",
+      "database": "blindgrade",
+      "username": "blindgrade",
+      "password": "blindgrade"
+    }
+  ]
 }

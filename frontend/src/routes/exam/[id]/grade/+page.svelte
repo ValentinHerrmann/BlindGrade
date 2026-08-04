@@ -207,8 +207,13 @@
       activeExerciseId = exercises[0].id;
     }
     submissions = await submissionRepository.getByExamId(examId, key);
+    const targetId = $page.url.searchParams.get('submissionId');
+    if (targetId) {
+      const idx = submissions.findIndex((s) => s.id === targetId);
+      if (idx >= 0) currentIndex = idx;
+    }
     if (submissions.length > 0) {
-      await initExerciseScores(submissions[0]);
+      await initExerciseScores(submissions[currentIndex]);
     }
   });
 

@@ -7,6 +7,7 @@ import { enqueueRequest } from '$lib/services/offlineQueue';
 import type { SubmissionRecord } from '$lib/db/schema';
 import { uint8ArrayToBase64, base64ToUint8Array } from '$lib/crypto/aesGcm';
 import { ensure64CharHex } from '$lib/crypto/hmac';
+import { examRepository } from '$lib/repositories/examRepository';
 
 export const submissionRepository = {
   async getAll(key: CryptoKey | null): Promise<SubmissionRecord[]> {
@@ -15,15 +16,25 @@ export const submissionRepository = {
       const raw = await db.submissions.toArray();
       return Promise.all(raw.map((sub) => decryptSubmission(sub, key)));
     } else {
+      // Remote mode: backend has no /submissions endpoint, so fetch per-exam
       try {
-        const rawList = await api.get<any[]>('/submissions');
-        return rawList.map((s: any) => ({
-          id: s.id,
-          examId: s.exam_id || s.examId,
-          pseudonymHash: s.pseudonym_hmac || s.pseudonymHash,
-          totalScore: s.total_score ?? s.totalScore ?? 0,
-          createdAt: s.created_at || s.createdAt || new Date().toISOString(),
-        }));
+        const exams = await examRepository.getAll(key);
+        const allSubmissions: SubmissionRecord[] = [];
+        for (const exam of exams) {
+          const rawList = await api.get<any[]>(`/exams/${exam.id}/submissions`);
+          allSubmissions.push(...rawList.map((s: any) => ({
+            id: s.id,
+            examId: s.exam_id || exam.id,
+            pseudonymHash: s.pseudonym_hmac || s.pseudonymHash,
+            totalScore: s.total_score ?? s.totalScore ?? 0,
+            createdAt: s.created_at || s.createdAt || new Date().toISOString(),
+            scanCt: s.scan_ciphertext_b64 ? base64ToUint8Array(s.scan_ciphertext_b64) : undefined,
+            scanIv: s.scan_iv_b64 ? base64ToUint8Array(s.scan_iv_b64) : undefined,
+            annotationCt: s.annotation_ciphertext_b64 ? base64ToUint8Array(s.annotation_ciphertext_b64) : undefined,
+            annotationIv: s.annotation_iv_b64 ? base64ToUint8Array(s.annotation_iv_b64) : undefined,
+          })));
+        }
+        return allSubmissions;
       } catch {
         return [];
       }
@@ -113,6 +124,35 @@ export const submissionRepository = {
         await api.delete(`/exams/${examId}/submissions/${id}`);
       } catch {
         enqueueRequest(`/exams/${examId}/submissions/${id}`, 'DELETE');
+      }
+    }
+  },
+
+  async clearGrading(examId: string, id: string, key: CryptoKey | null): Promise<void> {
+    const policy = get(storagePolicyStore);
+    if (policy.storageMode === 'all-local' || policy.storageMode === 'hybrid') {
+      await db.submissions.update(id, {
+        totalScore: undefined,
+        annotationCt: undefined,
+        annotationIv: undefined,
+        payloadCt: undefined,
+        payloadIv: undefined,
+      });
+    } else {
+      const sub = await this.getById(examId, id, key);
+      if (!sub) return;
+      const pseudonymHmac = await ensure64CharHex(sub.pseudonymHash);
+      const payload = {
+        id: sub.id,
+        pseudonym_hmac: pseudonymHmac,
+        total_score: null,
+        scan_ciphertext_b64: sub.scanCt ? uint8ArrayToBase64(sub.scanCt) : undefined,
+        scan_iv_b64: sub.scanIv ? uint8ArrayToBase64(sub.scanIv) : undefined,
+      };
+      try {
+        await api.post(`/exams/${examId}/submissions`, payload);
+      } catch {
+        enqueueRequest(`/exams/${examId}/submissions`, 'POST', payload);
       }
     }
   },

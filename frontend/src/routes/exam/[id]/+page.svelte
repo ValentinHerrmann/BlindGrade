@@ -183,14 +183,16 @@
         .toArray();
       for (const st of localStudents) {
         try {
-          const emptyCtB64 = uint8ArrayToBase64(st.piiCt || new Uint8Array([0]));
-          const emptyIvB64 = uint8ArrayToBase64(st.piiIv || new Uint8Array(12));
+          const ct = st.payloadCt || st.piiCt || new Uint8Array([0]);
+          const iv = st.payloadIv || st.piiIv || new Uint8Array(12);
+          const ctB64 = uint8ArrayToBase64(ct);
+          const ivB64 = uint8ArrayToBase64(iv);
           const emptySaltB64 = uint8ArrayToBase64(new Uint8Array(16));
           const pseudonymHmac = await ensure64CharHex(st.pseudonymId);
           await api.post(`/exams/${exam.id}/students`, {
             pseudonym_hmac: pseudonymHmac,
-            pii_ciphertext_b64: emptyCtB64,
-            iv_b64: emptyIvB64,
+            pii_ciphertext_b64: ctB64,
+            iv_b64: ivB64,
             encryption_salt_b64: emptySaltB64,
           });
         } catch {}

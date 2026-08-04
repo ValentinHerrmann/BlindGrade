@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page } from "$app/stores";
+  import { goto } from "$app/navigation";
   import { browser } from "$app/environment";
   import {
     detectHardware,
@@ -63,6 +64,9 @@
     createdAt: string;
     scanCt?: Uint8Array;
     scanIv?: Uint8Array;
+    totalScore?: number;
+    annotationCt?: Uint8Array;
+    annotationIv?: Uint8Array;
   }
 
   let unmatchedList: UnmatchedSubmission[] = [];
@@ -160,6 +164,9 @@
         createdAt: sub.createdAt || new Date().toISOString(),
         scanCt: sub.scanCt,
         scanIv: sub.scanIv,
+        totalScore: sub.totalScore,
+        annotationCt: sub.annotationCt,
+        annotationIv: sub.annotationIv,
       });
     }
 
@@ -230,6 +237,229 @@
       await loadScannedSubmissions();
     } catch (err: any) {
       alert(`Failed to delete scan: ${err?.message || err}`);
+    }
+  }
+
+  function isGraded(item: ScannedSubmissionItem): boolean {
+    return item.totalScore !== undefined || item.annotationCt !== undefined;
+  }
+
+  async function handleDeleteGrading(item: ScannedSubmissionItem) {
+    if (!confirm("Are you sure you want to delete the grading for this submission? This will clear all annotations and the score.")) return;
+    try {
+      const key = get(sessionStore).sessionKey;
+      await submissionRepository.clearGrading(examId, item.id, key);
+      await loadScannedSubmissions();
+    } catch (err: any) {
+      alert(`Failed to delete grading: ${err?.message || err}`);
+    }
+  }
+
+  let exportingId: string | null = null;
+
+  function drawStrokesOnCanvas(ctx: CanvasRenderingContext2D, strokes: any[]) {
+    for (const stroke of strokes) {
+      ctx.strokeStyle = "#ef4444";
+      ctx.fillStyle = "#ef4444";
+      ctx.lineWidth = 4;
+      ctx.lineCap = "round";
+      if (stroke.tool === "pen") {
+        ctx.beginPath();
+        stroke.points.forEach((p: any, idx: number) => {
+          if (idx === 0) ctx.moveTo(p.x, p.y);
+          else ctx.lineTo(p.x, p.y);
+        });
+        ctx.stroke();
+      } else if (stroke.tool === "line") {
+        if (stroke.points.length >= 2) {
+          ctx.beginPath();
+          ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+          ctx.lineTo(stroke.points[1].x, stroke.points[1].y);
+          ctx.stroke();
+        }
+      } else if (stroke.tool === "check_full" || stroke.tool === "check") {
+        const p = stroke.points[0];
+        ctx.beginPath();
+        ctx.moveTo(p.x - 14, p.y - 2);
+        ctx.lineTo(p.x - 4, p.y + 10);
+        ctx.lineTo(p.x + 16, p.y - 18);
+        ctx.stroke();
+      } else if (stroke.tool === "check_half") {
+        const p = stroke.points[0];
+        ctx.beginPath();
+        ctx.moveTo(p.x - 14, p.y - 2);
+        ctx.lineTo(p.x - 4, p.y + 10);
+        ctx.lineTo(p.x + 16, p.y - 18);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(p.x + 1, p.y - 12);
+        ctx.lineTo(p.x + 11, p.y - 2);
+        ctx.stroke();
+      } else if (stroke.tool === "check_quarter") {
+        const p = stroke.points[0];
+        ctx.beginPath();
+        ctx.moveTo(p.x - 14, p.y - 2);
+        ctx.lineTo(p.x - 4, p.y + 10);
+        ctx.lineTo(p.x + 16, p.y - 18);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(p.x - 2, p.y - 13);
+        ctx.lineTo(p.x + 8, p.y - 3);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(p.x + 5, p.y - 13);
+        ctx.lineTo(p.x + 15, p.y - 3);
+        ctx.stroke();
+      } else if (stroke.tool === "minus_full") {
+        ctx.font = "bold 26px sans-serif";
+        ctx.fillText("-1BE", stroke.points[0].x, stroke.points[0].y);
+      } else if (stroke.tool === "minus_half") {
+        ctx.font = "bold 26px sans-serif";
+        ctx.fillText("-0,5BE", stroke.points[0].x, stroke.points[0].y);
+      } else if (stroke.tool === "minus_quarter") {
+        ctx.font = "bold 26px sans-serif";
+        ctx.fillText("-0,25BE", stroke.points[0].x, stroke.points[0].y);
+      } else if (stroke.tool === "wrong" || stroke.tool === "cross") {
+        ctx.font = "bold italic 30px serif";
+        ctx.fillText("f", stroke.points[0].x, stroke.points[0].y);
+      } else if (stroke.tool === "missing") {
+        const p = stroke.points[0];
+        ctx.beginPath();
+        ctx.moveTo(p.x - 12, p.y - 18);
+        ctx.lineTo(p.x, p.y + 4);
+        ctx.lineTo(p.x + 12, p.y - 18);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(p.x - 15, p.y - 8);
+        ctx.lineTo(p.x + 15, p.y - 8);
+        ctx.stroke();
+      } else if (stroke.tool === "wf") {
+        ctx.font = "bold 24px sans-serif";
+        ctx.fillText("WF", stroke.points[0].x, stroke.points[0].y);
+      } else if (stroke.tool === "ff") {
+        ctx.font = "bold 24px sans-serif";
+        ctx.fillText("FF", stroke.points[0].x, stroke.points[0].y);
+      }
+    }
+  }
+
+  async function handleExportPdf(item: ScannedSubmissionItem) {
+    exportingId = item.id;
+    try {
+      const key = get(sessionStore).sessionKey;
+      if (!key) throw new Error("Session not unlocked");
+
+      const sub = await submissionRepository.getById(examId, item.id, key);
+      if (!sub?.scanCt || !sub.scanIv) throw new Error("Scan data not found");
+
+      const scanBytes = await decrypt(key, sub.scanCt, sub.scanIv);
+
+      // Load annotations
+      let strokes: any[] = [];
+      if (sub.annotationCt && sub.annotationIv) {
+        const annBytes = await decrypt(key, sub.annotationCt, sub.annotationIv);
+        strokes = JSON.parse(new TextDecoder().decode(annBytes));
+      }
+
+      const { PDFDocument } = await import("pdf-lib");
+      const outputPdf = await PDFDocument.create();
+
+      // Helper: convert canvas to PNG bytes
+      const canvasToPng = (canvas: HTMLCanvasElement): Promise<Uint8Array> =>
+        new Promise((resolve, reject) => {
+          canvas.toBlob((blob) => {
+            if (!blob) { reject(new Error("Canvas export failed")); return; }
+            blob.arrayBuffer().then((buf) => resolve(new Uint8Array(buf))).catch(reject);
+          }, "image/png");
+        });
+
+      // Helper: load Uint8Array as HTMLImageElement
+      const loadImageFromBytes = (bytes: Uint8Array): Promise<HTMLImageElement> =>
+        new Promise((resolve, reject) => {
+          const blob = new Blob([bytes], { type: "image/png" });
+          const url = URL.createObjectURL(blob);
+          const img = new Image();
+          img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+          img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Failed to load image")); };
+          img.src = url;
+        });
+
+      // Detect whether scanBytes is a PDF or an image
+      const isPdf =
+        scanBytes.length > 4 &&
+        scanBytes[0] === 0x25 && // %
+        scanBytes[1] === 0x50 && // P
+        scanBytes[2] === 0x44 && // D
+        scanBytes[3] === 0x46; // F
+
+      if (isPdf) {
+        // Original PDF path: render each page with pdf.js, draw annotations, embed as PNG
+        const pdfjsLib = await import("pdfjs-dist");
+        if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+          pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+        }
+
+        const pdfDoc = await pdfjsLib.getDocument({ data: scanBytes }).promise;
+
+        for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum++) {
+          const pdfPage = await pdfDoc.getPage(pageNum);
+          const viewport = pdfPage.getViewport({ scale: 2 });
+
+          const canvas = document.createElement("canvas");
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const ctx = canvas.getContext("2d")!;
+
+          await pdfPage.render({ canvasContext: ctx, canvas, viewport } as any).promise;
+
+          if (strokes.length > 0) {
+            drawStrokesOnCanvas(ctx, strokes);
+          }
+
+          const pngBytes = await canvasToPng(canvas);
+          const pngImage = await outputPdf.embedPng(pngBytes);
+          // use half the canvas size (scale=2) as the PDF page dimensions in pt
+          const outPage = outputPdf.addPage([viewport.width / 2, viewport.height / 2]);
+          outPage.drawImage(pngImage, { x: 0, y: 0, width: viewport.width / 2, height: viewport.height / 2 });
+        }
+      } else {
+        // Image path (default for ingested scans): load image, draw annotations, embed directly
+        const img = await loadImageFromBytes(scanBytes);
+        const canvas = document.createElement("canvas");
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext("2d")!;
+        ctx.drawImage(img, 0, 0);
+
+        if (strokes.length > 0) {
+          drawStrokesOnCanvas(ctx, strokes);
+        }
+
+        const pngBytes = await canvasToPng(canvas);
+        const pngImage = await outputPdf.embedPng(pngBytes);
+
+        // Convert pixel dimensions to PDF points at 72 DPI.
+        // Scanned images are rendered at scale=2 (~192 DPI from a 96 DPI base),
+        // so scale down to obtain a natural page size in points.
+        const dpi = 192;
+        const pageWidth = img.width * (72 / dpi);
+        const pageHeight = img.height * (72 / dpi);
+        const outPage = outputPdf.addPage([pageWidth, pageHeight]);
+        outPage.drawImage(pngImage, { x: 0, y: 0, width: pageWidth, height: pageHeight });
+      }
+
+      const pdfBytes = await outputPdf.save();
+      const blob = new Blob([pdfBytes as unknown as BlobPart], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${item.fallbackCode || item.id}_graded.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(`Failed to export PDF: ${err?.message || err}`);
+    } finally {
+      exportingId = null;
     }
   }
 
@@ -540,34 +770,6 @@
       newlyIngestedCount++;
       scannedCount++;
 
-      if ($storagePolicyStore.storageMode === "all-server") {
-        try {
-          const emptyCtB64 = uint8ArrayToBase64(new Uint8Array([0]));
-          const emptyIvB64 = uint8ArrayToBase64(new Uint8Array(12));
-          const emptySaltB64 = uint8ArrayToBase64(new Uint8Array(16));
-          const pseudoHmac = await ensure64CharHex(booklet.pseudonymId);
-          await api.post(`/exams/${examId}/students`, {
-            pseudonym_hmac: pseudoHmac,
-            pii_ciphertext_b64: emptyCtB64,
-            iv_b64: emptyIvB64,
-            encryption_salt_b64: emptySaltB64,
-          });
-          const subPayload: any = {
-            id: subId,
-            pseudonym_hmac: pseudoHmac,
-          };
-          if (scanCt && scanIv) {
-            subPayload.scan_ciphertext_b64 = uint8ArrayToBase64(scanCt);
-            subPayload.scan_iv_b64 = uint8ArrayToBase64(scanIv);
-          }
-          await api.post(`/exams/${examId}/submissions`, subPayload);
-        } catch (syncErr) {
-          console.warn(
-            "Failed to sync student/submission to server:",
-            syncErr,
-          );
-        }
-      }
     }
 
     await refreshUnmatched();
@@ -580,9 +782,13 @@
     const code = item.newCode.trim();
     if (!code) return;
     const key = get(sessionStore).sessionKey;
-    const rawSt = await db.students.get(item.studentId);
-    if (rawSt) {
-      const st = await decryptStudent(rawSt, key);
+    const students = await studentRepository.getByExamId(examId, key);
+    let st = students.find((s) => s.pseudonymId === item.studentId);
+    if (!st) {
+      const rawSt = await db.students.get(item.studentId);
+      if (rawSt) st = await decryptStudent(rawSt, key);
+    }
+    if (st) {
       st.fallbackCode = code;
       const parsed = parseStudentQr(code);
       if (parsed) {
@@ -702,6 +908,11 @@
             <span class="time">{new Date(item.createdAt).toLocaleString()}</span>
             <div class="action-buttons">
               <button class="btn-preview" on:click={() => openPreview(item)}>Preview Scan</button>
+              <button class="btn-grade" on:click={() => goto(`/exam/${examId}/grade?submissionId=${item.id}`)}>Go to Grading</button>
+              <button class="btn-export" disabled={exportingId === item.id} on:click={() => handleExportPdf(item)}>
+                {exportingId === item.id ? 'Exporting…' : 'Export PDF'}
+              </button>
+              <button class="btn-delete-grading" disabled={!isGraded(item)} on:click={() => handleDeleteGrading(item)}>Delete Grading</button>
               <button class="btn-delete" on:click={() => handleDeleteScan(item)}>Delete</button>
             </div>
           </div>
@@ -1018,6 +1229,64 @@
 
   .btn-delete:hover {
     background: #b91c1c;
+  }
+
+  .btn-grade {
+    padding: 0.4rem 0.8rem;
+    background: #7c3aed;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.8rem;
+    transition: background 0.2s ease;
+  }
+
+  .btn-grade:hover {
+    background: #6d28d9;
+  }
+
+  .btn-export {
+    padding: 0.4rem 0.8rem;
+    background: #059669;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.8rem;
+    transition: background 0.2s ease;
+  }
+
+  .btn-export:hover:not(:disabled) {
+    background: #047857;
+  }
+
+  .btn-export:disabled {
+    opacity: 0.6;
+    cursor: wait;
+  }
+
+  .btn-delete-grading {
+    padding: 0.4rem 0.8rem;
+    background: #d97706;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.8rem;
+    transition: background 0.2s ease;
+  }
+
+  .btn-delete-grading:hover:not(:disabled) {
+    background: #b45309;
+  }
+
+  .btn-delete-grading:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
   }
 
   .modal-backdrop {
