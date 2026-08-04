@@ -53,7 +53,8 @@
   onMount(async () => {
     try {
       if (!$isUnlocked) {
-        await sessionStore.initAnonymousSession();
+        goto("/unlock");
+        return;
       }
       await refreshExams();
     } finally {
