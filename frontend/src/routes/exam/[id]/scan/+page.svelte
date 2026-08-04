@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page } from "$app/stores";
+  export let params;
   import { goto } from "$app/navigation";
   import { browser } from "$app/environment";
   import {

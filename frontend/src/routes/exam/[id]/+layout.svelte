@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page } from "$app/stores";
+  export let params;
   import { onMount } from "svelte";
   import { browser } from "$app/environment";
   import { afterNavigate } from "$app/navigation";

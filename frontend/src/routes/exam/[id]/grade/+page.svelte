@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page } from "$app/stores";
+  export let params;
   import { onMount, tick } from "svelte";
   import { db } from "$lib/db/db";
   import type { SubmissionRecord, ExerciseRecord, ExamRecord } from "$lib/db/schema";
