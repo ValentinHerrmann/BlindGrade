@@ -624,6 +624,21 @@ export async function loadScoresEncrypted(submissionId: string, key: CryptoKey |
   return Promise.all(raw.map((sc) => decryptScore(sc, key)));
 }
 
+/**
+ * Delete a single exercise score record from IndexedDB.
+ * Used when resetting an exercise back to ungraded status.
+ */
+export async function deleteScoreEncrypted(submissionId: string, exerciseId: string): Promise<void> {
+  const existing = await db.exerciseScores
+    .where('submissionId')
+    .equals(submissionId)
+    .and((item) => item.exerciseId === exerciseId)
+    .first();
+  if (existing) {
+    await db.exerciseScores.delete(existing.id);
+  }
+}
+
 export async function saveScoreEncrypted(scoreRec: ExerciseScoreRecord, key: CryptoKey | null): Promise<string> {
   const encrypted = await encryptScore(scoreRec, key);
   await db.exerciseScores.put(encrypted);

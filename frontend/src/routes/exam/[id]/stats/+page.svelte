@@ -51,6 +51,9 @@
     stats = calculateSummaryStats(scores);
   }
 
+  $: fullyGradedCount = submissions.filter(
+    (s) => typeof s.totalScore === 'number' && !isNaN(s.totalScore)
+  ).length;
   $: maxBinCount = stats ? Math.max(...stats.histogram.map((b) => b.count), 1) : 1;
 
   async function confirmAndExport() {
@@ -61,7 +64,7 @@
       return {
         studentPseudonymId: st.pseudonymId,
         fallbackCode: st.fallbackCode || '',
-        totalScore: sub?.totalScore ?? 'N/A',
+        totalScore: typeof sub?.totalScore === 'number' ? sub.totalScore : 'Ungraded',
       };
     });
 
@@ -71,6 +74,15 @@
 
 <div class="stats-page">
   <h2>Class Grade Analytics & Export</h2>
+
+  {#if submissions.length > 0}
+    <div style="margin-bottom: 1rem; color: #94a3b8; font-size: 0.95rem;">
+      Status: <strong>{fullyGradedCount} von {submissions.length}</strong> Abgaben vollständig korrigiert.
+      {#if fullyGradedCount < submissions.length}
+        <span style="color: #fbbf24; margin-left: 0.5rem;">({submissions.length - fullyGradedCount} ausstehend/in Bearbeitung)</span>
+      {/if}
+    </div>
+  {/if}
 
   {#if stats}
     <div class="stats-grid">

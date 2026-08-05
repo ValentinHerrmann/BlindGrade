@@ -238,8 +238,10 @@ export async function unpackProject(
   for (const sub of submissions) await submissionRepository.save(sub, key);
   if (examExercises.length > 0) await db.examExercises.bulkPut(examExercises);
   for (const es of exerciseScores) {
-    const encrypted = await encryptScore(es, key);
-    await db.exerciseScores.put(encrypted);
+    if (typeof es.score === 'number' && !isNaN(es.score)) {
+      const encrypted = await encryptScore(es, key);
+      await db.exerciseScores.put(encrypted);
+    }
   }
 
 

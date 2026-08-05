@@ -18,7 +18,8 @@ class SubmissionCreate(BaseModel):
 
 
 class SubmissionScoreUpdate(BaseModel):
-    total_score: float = Field(ge=0)
+    """Schema for updating submission score."""
+    total_score: float | None = Field(default=None, ge=0)
 
 
 class SubmissionResponse(BaseModel):

@@ -10,6 +10,7 @@
     loadSubmissionsEncrypted,
     loadScoresEncrypted,
     saveScoreEncrypted,
+    deleteScoreEncrypted,
     saveSubmissionEncrypted,
     decryptSubmission,
   } from "$lib/db/dbEncryption";
@@ -28,10 +29,9 @@
   let submissions: SubmissionRecord[] = [];
   let exercises: ExerciseRecord[] = [];
   let currentIndex = 0;
-  let scoreInputs: Record<string, number> = {};
+  let scoreInputs: Record<string, number | null> = {};
   let manualOverride: Record<string, boolean> = {};
   let activeExerciseId: string = "";
-  let totalScore = 0;
   let isSaving = false;
   let showLastSubModal = false;
   let showClearConfirmModal = false;
@@ -91,17 +91,19 @@
     loadSubmissionCanvas(currentSub);
   }
 
-  $: {
-    totalScore = Math.round(
-      Object.values(scoreInputs).reduce(
-        (sum, val) => sum + (Number(val) || 0),
-        0
-      ) * 100
-    ) / 100;
-  }
+  $: gradedCount = exercises.filter(
+    (ex) => scoreInputs[ex.id] !== null && scoreInputs[ex.id] !== undefined
+  ).length;
+  $: isFullyGraded = exercises.length > 0 && gradedCount === exercises.length;
+  $: sumGradedScores = Math.round(
+    exercises.reduce((sum, ex) => sum + (scoreInputs[ex.id] ?? 0), 0) * 100
+  ) / 100;
+  $: totalScore = isFullyGraded ? sumGradedScores : undefined;
 
   $: totalMaxPoints = exercises.reduce((sum, ex) => sum + (ex.maxPoints || 0), 0);
-  $: calculatedGradeDetail = calculateGradeDetail(totalScore, totalMaxPoints, exam?.gradingKey);
+  $: calculatedGradeDetail = isFullyGraded && totalScore !== undefined
+    ? calculateGradeDetail(totalScore, totalMaxPoints, exam?.gradingKey)
+    : null;
   $: calculatedGrade = calculatedGradeDetail
     ? { grade: calculatedGradeDetail.grade, label: calculatedGradeDetail.label }
     : null;
@@ -111,41 +113,52 @@
       if (manualOverride[ex.id]) continue;
       let positivePoints = 0;
       let negativePoints = 0;
+      let stampCount = 0;
 
       for (const stroke of currentStrokes) {
         const targetId = stroke.exerciseId || (exercises[0] ? exercises[0].id : undefined);
         if (targetId === ex.id) {
           if (stroke.tool === "check_full" || stroke.tool === "check") {
             positivePoints += 1.0;
+            stampCount++;
           } else if (stroke.tool === "check_half") {
             positivePoints += 0.5;
+            stampCount++;
           } else if (stroke.tool === "check_quarter") {
             positivePoints += 0.25;
+            stampCount++;
           } else if (stroke.tool === "minus_full") {
             negativePoints += 1.0;
+            stampCount++;
           } else if (stroke.tool === "minus_half") {
             negativePoints += 0.5;
+            stampCount++;
           } else if (stroke.tool === "minus_quarter") {
             negativePoints += 0.25;
+            stampCount++;
           }
         }
       }
 
-      const calculated = positivePoints - negativePoints;
-      scoreInputs[ex.id] = Math.max(0, Math.min(ex.maxPoints, Math.round(calculated * 100) / 100));
+      if (stampCount > 0) {
+        const calculated = positivePoints - negativePoints;
+        scoreInputs[ex.id] = Math.max(0, Math.min(ex.maxPoints, Math.round(calculated * 100) / 100));
+      } else {
+        scoreInputs[ex.id] = null;
+      }
     }
     scoreInputs = scoreInputs;
   }
 
   function addAutoScore(exId: string, maxPoints: number, points: number) {
-    const current = Number(scoreInputs[exId]) || 0;
+    const current = scoreInputs[exId] ?? 0;
     scoreInputs[exId] = Math.min(maxPoints, Math.round((current + points) * 100) / 100);
     manualOverride[exId] = false;
     scoreInputs = scoreInputs;
   }
 
   function subtractAutoScore(exId: string, points: number) {
-    const current = Number(scoreInputs[exId]) || 0;
+    const current = scoreInputs[exId] ?? 0;
     scoreInputs[exId] = Math.max(0, Math.round((current - points) * 100) / 100);
     manualOverride[exId] = false;
     scoreInputs = scoreInputs;
@@ -235,32 +248,33 @@
     }
     const key = get(sessionStore).sessionKey;
     const existingScores = await loadScoresEncrypted(sub.id, key);
-    const validScores = existingScores.filter(
-      (es) => typeof es.score === "number" && !isNaN(es.score)
-    );
+    const existingMap = new Map(existingScores.map((es) => [es.exerciseId, es]));
 
-    if (validScores.length > 0) {
-      validScores.forEach((es) => {
-        scoreInputs[es.exerciseId] = es.score!;
-      });
-      exercises.forEach((ex) => {
-        if (scoreInputs[ex.id] === undefined) {
-          scoreInputs[ex.id] = 0;
+    // Check strokes/annotations for exercises with active stamps
+    const exerciseIdsWithStrokes = new Set<string>();
+    if (currentStrokes && currentStrokes.length > 0) {
+      for (const stroke of currentStrokes) {
+        if (stroke.exerciseId) {
+          exerciseIdsWithStrokes.add(stroke.exerciseId);
         }
-      });
-    } else if (existingScores.length === 0 && sub.totalScore !== undefined) {
-      // In-memory UI fallback ONLY — DO NOT write fake scores to IndexedDB
-      const totalMax = exercises.reduce((s, ex) => s + (ex.maxPoints || 0), 0);
-      for (const ex of exercises) {
-        scoreInputs[ex.id] = totalMax > 0
-          ? Math.round(sub.totalScore! * (ex.maxPoints / totalMax) * 100) / 100
-          : 0;
       }
-    } else {
-      exercises.forEach((ex) => {
-        scoreInputs[ex.id] = 0;
-      });
     }
+
+    for (const ex of exercises) {
+      const existing = existingMap.get(ex.id);
+      if (existing && typeof existing.score === "number" && !isNaN(existing.score)) {
+        // Legacy detection: if score is 0 and no annotations exist for this exercise,
+        // treat as ungraded (null) instead of graded 0 points
+        if (existing.score === 0 && !exerciseIdsWithStrokes.has(ex.id) && !manualOverride[ex.id]) {
+          scoreInputs[ex.id] = null;
+        } else {
+          scoreInputs[ex.id] = existing.score;
+        }
+      } else {
+        scoreInputs[ex.id] = null;
+      }
+    }
+    scoreInputs = scoreInputs;
   }
 
   async function loadSubmissionCanvas(sub: SubmissionRecord) {
@@ -768,24 +782,28 @@
     isSaving = true;
 
     try {
-      currentSub.totalScore = Number(totalScore);
+      currentSub.totalScore = isFullyGraded ? sumGradedScores : undefined;
       const key = get(sessionStore).sessionKey;
 
-      // Save individual exercise scores
+      // Save individual exercise scores if graded, delete if reset to ungraded
       for (const ex of exercises) {
-        const scoreVal = Number(scoreInputs[ex.id]) || 0;
-        const existing = await db.exerciseScores
-          .where("submissionId")
-          .equals(currentSub.id)
-          .and((item) => item.exerciseId === ex.id)
-          .first();
+        const val = scoreInputs[ex.id];
+        if (val !== null && val !== undefined && !isNaN(val)) {
+          const existing = await db.exerciseScores
+            .where("submissionId")
+            .equals(currentSub.id)
+            .and((item) => item.exerciseId === ex.id)
+            .first();
 
-        await saveScoreEncrypted({
-          id: existing ? existing.id : crypto.randomUUID(),
-          submissionId: currentSub.id,
-          exerciseId: ex.id,
-          score: scoreVal,
-        }, key);
+          await saveScoreEncrypted({
+            id: existing ? existing.id : crypto.randomUUID(),
+            submissionId: currentSub.id,
+            exerciseId: ex.id,
+            score: val,
+          }, key);
+        } else {
+          await deleteScoreEncrypted(currentSub.id, ex.id);
+        }
       }
 
       // Encrypt annotations vector layer
@@ -808,7 +826,7 @@
 
       if ($storagePolicyStore.storageMode === "all-server") {
         await api.patch(`/exams/${examId}/submissions/${currentSub.id}/score`, {
-          total_score: Number(totalScore),
+          total_score: isFullyGraded ? sumGradedScores : null,
         });
       }
       sessionStore.setDirty(false);
@@ -1113,17 +1131,28 @@
                   step="0.25"
                   min="0"
                   max={ex.maxPoints}
-                  bind:value={scoreInputs[ex.id]}
-                  on:input={() => { manualOverride[ex.id] = true; }}
+                  placeholder="–"
+                  value={scoreInputs[ex.id] ?? ''}
+                  on:input={(e) => {
+                    const raw = e.currentTarget.value.trim();
+                    manualOverride[ex.id] = true;
+                    if (raw === '') {
+                      scoreInputs[ex.id] = null;
+                    } else {
+                      const parsed = parseFloat(raw);
+                      scoreInputs[ex.id] = isNaN(parsed) ? null : Math.max(0, Math.min(ex.maxPoints, parsed));
+                    }
+                    scoreInputs = scoreInputs;
+                  }}
                 />
                 <span class="ex-max-pts">/ {ex.maxPoints}</span>
                 <button
                   type="button"
                   class="reset-btn-compact"
-                  title="Reset to 0"
+                  title="Als unkorrigiert zurücksetzen"
                   on:click={(e) => {
                     e.stopPropagation();
-                    scoreInputs[ex.id] = 0;
+                    scoreInputs[ex.id] = null;
                     manualOverride[ex.id] = false;
                     scoreInputs = scoreInputs;
                   }}>×</button>
@@ -1142,7 +1171,12 @@
             <div class="total-score-top-row">
               <span class="total-score-label">Gesamtpunkte</span>
               <div class="total-score-val-wrap">
-                <span class="total-score-val">{totalScore}</span>
+                {#if isFullyGraded}
+                  <span class="total-score-val">{totalScore}</span>
+                {:else}
+                  <span class="total-score-val">{sumGradedScores}</span>
+                  <span class="total-score-in-progress" title="In Bearbeitung" style="font-size: 0.85rem; color: #fbbf24; margin-left: 4px;">({gradedCount}/{exercises.length} korrigiert)</span>
+                {/if}
                 <span class="total-score-max">/ {totalMaxPoints} Pkt.</span>
               </div>
             </div>

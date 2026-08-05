@@ -107,8 +107,10 @@ export async function packProject(
 
   // Frame EXERCISESCORE records
   for (const es of exerciseScores) {
-    const payload = new TextEncoder().encode(JSON.stringify(es));
-    recordChunks.push(frameRecord(RecordType.EXERCISESCORE, payload));
+    if (typeof es.score === 'number' && !isNaN(es.score)) {
+      const payload = new TextEncoder().encode(JSON.stringify(es));
+      recordChunks.push(frameRecord(RecordType.EXERCISESCORE, payload));
+    }
   }
 
   // Frame STUDENT records
