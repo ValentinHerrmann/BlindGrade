@@ -151,14 +151,10 @@
       }
     }
 
-    // Only include scores from graded submissions to avoid stale/orphaned scores
-    // from ungraded submissions polluting the analytics
-    const gradedSubmissionIds = new Set(gradedSubmissions.map((s) => s.id));
-
-    // Group scores by exercise ID (only from graded submissions)
+    // Group scores by exercise ID (include every individually graded exercise)
     const scoresByExercise = new Map<string, number[]>();
     for (const sc of allScores) {
-      if (typeof sc.score === 'number' && !isNaN(sc.score) && gradedSubmissionIds.has(sc.submissionId)) {
+      if (typeof sc.score === 'number' && !isNaN(sc.score)) {
         if (!scoresByExercise.has(sc.exerciseId)) {
           scoresByExercise.set(sc.exerciseId, []);
         }
