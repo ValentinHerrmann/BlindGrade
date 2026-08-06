@@ -151,10 +151,14 @@
       }
     }
 
-    // Group scores by exercise ID
+    // Only include scores from graded submissions to avoid stale/orphaned scores
+    // from ungraded submissions polluting the analytics
+    const gradedSubmissionIds = new Set(gradedSubmissions.map((s) => s.id));
+
+    // Group scores by exercise ID (only from graded submissions)
     const scoresByExercise = new Map<string, number[]>();
     for (const sc of allScores) {
-      if (typeof sc.score === 'number' && !isNaN(sc.score)) {
+      if (typeof sc.score === 'number' && !isNaN(sc.score) && gradedSubmissionIds.has(sc.submissionId)) {
         if (!scoresByExercise.has(sc.exerciseId)) {
           scoresByExercise.set(sc.exerciseId, []);
         }
@@ -163,14 +167,14 @@
     }
 
     // 1. Aggregate stats by exercise group key (group ID, name, or distinct ID)
+    // Store {score, maxPoints} pairs so variants with different maxPoints are handled correctly
     const exGroupMap = new Map<string, {
       name: string;
       tag?: string;
       grade?: string;
       subject?: string;
       examIds: Set<string>;
-      scores: number[];
-      maxPoints: number;
+      scorePairs: { score: number; maxPoints: number }[];
     }>();
 
     for (const ex of allExercises) {
@@ -184,8 +188,7 @@
           grade: ex.grade,
           subject: ex.subject,
           examIds: new Set<string>(),
-          scores: [],
-          maxPoints: ex.maxPoints || 10,
+          scorePairs: [],
         });
       }
 
@@ -202,10 +205,13 @@
         group.examIds.add(ex.examId);
       }
 
-      // Add scores
+      // Add scores paired with their own maxPoints (variants can have different maxPoints)
       const exScores = scoresByExercise.get(ex.id);
       if (exScores) {
-        group.scores.push(...exScores);
+        const exMax = ex.maxPoints || 10;
+        for (const sc of exScores) {
+          group.scorePairs.push({ score: sc, maxPoints: exMax });
+        }
       }
     }
 
@@ -218,10 +224,11 @@
       let avgScorePct: number | null = null;
       let isProblematic = false;
 
-      if (group.scores.length > 0 && group.maxPoints > 0) {
-        const sumScores = group.scores.reduce((a, b) => a + b, 0);
-        const avgRaw = sumScores / group.scores.length;
-        avgScorePct = Math.min(100, Math.max(0, Math.round((avgRaw / group.maxPoints) * 100)));
+      if (group.scorePairs.length > 0) {
+        // Calculate percentage per score using its own maxPoints, then average percentages
+        const pcts = group.scorePairs.map((p) => (p.score / Math.max(p.maxPoints, 1)) * 100);
+        const avgPct = pcts.reduce((a, b) => a + b, 0) / pcts.length;
+        avgScorePct = Math.min(100, Math.max(0, Math.round(avgPct)));
         isProblematic = avgScorePct < 60;
       }
 

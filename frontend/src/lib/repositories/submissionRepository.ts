@@ -26,7 +26,7 @@ export const submissionRepository = {
             id: s.id,
             examId: s.exam_id || exam.id,
             pseudonymHash: s.pseudonym_hmac || s.pseudonymHash,
-            totalScore: s.total_score ?? s.totalScore ?? 0,
+            totalScore: s.total_score ?? s.totalScore,
             createdAt: s.created_at || s.createdAt || new Date().toISOString(),
             scanCt: s.scan_ciphertext_b64 ? base64ToUint8Array(s.scan_ciphertext_b64) : undefined,
             scanIv: s.scan_iv_b64 ? base64ToUint8Array(s.scan_iv_b64) : undefined,
@@ -53,7 +53,7 @@ export const submissionRepository = {
           id: s.id,
           examId: s.exam_id || examId,
           pseudonymHash: s.pseudonym_hmac || s.pseudonymHash,
-          totalScore: s.total_score ?? s.totalScore ?? 0,
+          totalScore: s.total_score ?? s.totalScore,
           createdAt: s.created_at || s.createdAt || new Date().toISOString(),
           scanCt: s.scan_ciphertext_b64 ? base64ToUint8Array(s.scan_ciphertext_b64) : undefined,
           scanIv: s.scan_iv_b64 ? base64ToUint8Array(s.scan_iv_b64) : undefined,
@@ -78,7 +78,7 @@ export const submissionRepository = {
           id: s.id,
           examId: s.exam_id || examId,
           pseudonymHash: s.pseudonym_hmac || s.pseudonymHash,
-          totalScore: s.total_score ?? s.totalScore ?? 0,
+          totalScore: s.total_score ?? s.totalScore,
           createdAt: s.created_at || s.createdAt || new Date().toISOString(),
           scanCt: s.scan_ciphertext_b64 ? base64ToUint8Array(s.scan_ciphertext_b64) : undefined,
           scanIv: s.scan_iv_b64 ? base64ToUint8Array(s.scan_iv_b64) : undefined,
@@ -101,7 +101,7 @@ export const submissionRepository = {
       const payload = {
         id: submission.id,
         pseudonym_hmac: pseudonymHmac,
-        total_score: submission.totalScore || 0,
+        total_score: submission.totalScore ?? null,
         scan_ciphertext_b64: submission.scanCt ? uint8ArrayToBase64(submission.scanCt) : undefined,
         scan_iv_b64: submission.scanIv ? uint8ArrayToBase64(submission.scanIv) : undefined,
         annotation_ciphertext_b64: submission.annotationCt ? uint8ArrayToBase64(submission.annotationCt) : undefined,
@@ -117,6 +117,14 @@ export const submissionRepository = {
 
   async delete(examId: string, id: string): Promise<void> {
     const policy = get(storagePolicyStore);
+
+    // Always clean up associated exercise scores to prevent orphaned data
+    // from polluting analytics
+    const scores = await db.exerciseScores.where('submissionId').equals(id).toArray();
+    for (const score of scores) {
+      await db.exerciseScores.delete(score.id);
+    }
+
     if (policy.storageMode === 'all-local' || policy.storageMode === 'hybrid') {
       await db.submissions.delete(id);
     } else {
@@ -130,14 +138,26 @@ export const submissionRepository = {
 
   async clearGrading(examId: string, id: string, key: CryptoKey | null): Promise<void> {
     const policy = get(storagePolicyStore);
+
+    // Delete all exercise scores for this submission to prevent orphaned scores
+    // from polluting analytics
+    const scores = await db.exerciseScores.where('submissionId').equals(id).toArray();
+    for (const score of scores) {
+      await db.exerciseScores.delete(score.id);
+    }
+
     if (policy.storageMode === 'all-local' || policy.storageMode === 'hybrid') {
-      await db.submissions.update(id, {
-        totalScore: undefined,
-        annotationCt: undefined,
-        annotationIv: undefined,
-        payloadCt: undefined,
-        payloadIv: undefined,
-      });
+      // Must decrypt → modify → re-encrypt → save, because submissions are stored
+      // encrypted in IndexedDB. Directly updating the encrypted record won't work
+      // since fields like totalScore don't exist at the encrypted storage level.
+      const raw = await db.submissions.get(id);
+      if (!raw) return;
+      const sub = await decryptSubmission(raw, key);
+      sub.totalScore = undefined;
+      sub.annotationCt = undefined;
+      sub.annotationIv = undefined;
+      const encrypted = await encryptSubmission(sub, key);
+      await db.submissions.put(encrypted);
     } else {
       const sub = await this.getById(examId, id, key);
       if (!sub) return;

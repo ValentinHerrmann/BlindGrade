@@ -44,7 +44,7 @@ export async function eraseStudent(pseudonymId: string, examId: string): Promise
     note: 'GDPR Art. 17 student erasure',
   }, key);
 
-  await db.transaction('rw', [db.students, db.submissions, db.auditLog], async () => {
+  await db.transaction('rw', [db.students, db.submissions, db.exerciseScores, db.auditLog], async () => {
     // 1. Find all submissions linked to this student
     const student = await db.students.get(pseudonymId);
     if (!student) {
@@ -59,8 +59,13 @@ export async function eraseStudent(pseudonymId: string, examId: string): Promise
     // Delete student identity record
     await db.students.delete(pseudonymId);
 
-    // Delete submission records
+    // Delete exercise scores and submission records
     for (const sub of matchingSubs) {
+      // Clean up exercise scores to prevent orphaned data from polluting analytics
+      const scores = await db.exerciseScores.where('submissionId').equals(sub.id).toArray();
+      for (const score of scores) {
+        await db.exerciseScores.delete(score.id);
+      }
       await db.submissions.delete(sub.id);
     }
 

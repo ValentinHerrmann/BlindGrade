@@ -102,6 +102,15 @@ export const examRepository = {
 
   async delete(id: string): Promise<void> {
     if (!db.exams) return;
+
+    // Collect submission IDs first to clean up exercise scores
+    const submissionIds = (await db.submissions.where('examId').equals(id).toArray()).map((s) => s.id);
+
+    // Delete exercise scores for all submissions in this exam to prevent orphaned data
+    for (const subId of submissionIds) {
+      await db.exerciseScores.where('submissionId').equals(subId).delete();
+    }
+
     await db.exams.delete(id);
     await db.exercises.where('examId').equals(id).delete();
     await db.examExercises.where('examId').equals(id).delete();

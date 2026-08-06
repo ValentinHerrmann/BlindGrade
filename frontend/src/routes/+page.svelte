@@ -239,11 +239,21 @@
 
   async function handleDeleteExpiredExam() {
     if (!expiredExam) return;
-    await db.exams.delete(expiredExam.exam.id);
-    await db.exercises.where('examId').equals(expiredExam.exam.id).delete();
-    await db.examExercises.where('examId').equals(expiredExam.exam.id).delete();
-    await db.submissions.where('examId').equals(expiredExam.exam.id).delete();
-    await db.students.where('examId').equals(expiredExam.exam.id).delete();
+    const examId = expiredExam.exam.id;
+
+    // Collect submission IDs first to clean up exercise scores
+    const submissionIds = (await db.submissions.where('examId').equals(examId).toArray()).map((s) => s.id);
+
+    // Delete exercise scores for all submissions in this exam to prevent orphaned data
+    for (const subId of submissionIds) {
+      await db.exerciseScores.where('submissionId').equals(subId).delete();
+    }
+
+    await db.exams.delete(examId);
+    await db.exercises.where('examId').equals(examId).delete();
+    await db.examExercises.where('examId').equals(examId).delete();
+    await db.submissions.where('examId').equals(examId).delete();
+    await db.students.where('examId').equals(examId).delete();
     expiredExam = null;
     await refreshExams();
   }

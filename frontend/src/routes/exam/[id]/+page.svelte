@@ -210,7 +210,7 @@
           await api.post(`/exams/${exam.id}/submissions`, {
             id: sub.id,
             pseudonym_hmac: pseudonymHmac,
-            total_score: sub.totalScore || 0,
+            total_score: sub.totalScore ?? null,
             scan_ciphertext_b64: sub.scanCt
               ? uint8ArrayToBase64(sub.scanCt)
               : undefined,
@@ -246,6 +246,14 @@
       return;
 
     try {
+      // Collect submission IDs first to clean up exercise scores
+      const submissionIds = (await db.submissions.where("examId").equals(exam.id).toArray()).map((s) => s.id);
+
+      // Delete exercise scores for all submissions in this exam to prevent orphaned data
+      for (const subId of submissionIds) {
+        await db.exerciseScores.where("submissionId").equals(subId).delete();
+      }
+
       await db.exams.delete(exam.id);
       await db.exercises.where("examId").equals(exam.id).delete();
       await db.examExercises.where("examId").equals(exam.id).delete();
