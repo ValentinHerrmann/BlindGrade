@@ -205,6 +205,31 @@ async def update_score(
     )
 
 
+@router.delete("/{sub_id}/grading", status_code=status.HTTP_204_NO_CONTENT)
+async def clear_grading(
+    sub_id: uuid.UUID,
+    exam: Exam = Depends(get_exam_for_teacher),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Clear all grading data (score + annotations) for a submission."""
+    result = await db.execute(
+        select(ScanSubmission).where(
+            ScanSubmission.id == sub_id,
+            ScanSubmission.exam_id == exam.id,
+            ScanSubmission.deleted_at.is_(None),
+        )
+    )
+    sub = result.scalar_one_or_none()
+    if sub is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Submission not found.")
+
+    sub.total_score = None
+    sub.annotation_ciphertext = None
+    sub.annotation_iv = None
+    await db.flush()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.delete("/{sub_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_submission(
     sub_id: uuid.UUID,

@@ -159,20 +159,12 @@ export const submissionRepository = {
       const encrypted = await encryptSubmission(sub, key);
       await db.submissions.put(encrypted);
     } else {
-      const sub = await this.getById(examId, id, key);
-      if (!sub) return;
-      const pseudonymHmac = await ensure64CharHex(sub.pseudonymHash);
-      const payload = {
-        id: sub.id,
-        pseudonym_hmac: pseudonymHmac,
-        total_score: null,
-        scan_ciphertext_b64: sub.scanCt ? uint8ArrayToBase64(sub.scanCt) : undefined,
-        scan_iv_b64: sub.scanIv ? uint8ArrayToBase64(sub.scanIv) : undefined,
-      };
+      // all-server mode: use dedicated DELETE /grading endpoint which atomically clears
+      // both total_score and annotations on the backend in a single request.
       try {
-        await api.post(`/exams/${examId}/submissions`, payload);
+        await api.delete(`/exams/${examId}/submissions/${id}/grading`);
       } catch {
-        enqueueRequest(`/exams/${examId}/submissions`, 'POST', payload);
+        enqueueRequest(`/exams/${examId}/submissions/${id}/grading`, 'DELETE');
       }
     }
   },
