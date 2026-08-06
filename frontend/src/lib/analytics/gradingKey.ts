@@ -41,16 +41,17 @@ export function getPresetCutoffs(preset: GradingKeyConfig['preset']): GradeCutof
   }
 }
 
-export function calculateGrade(
-  score: number,
-  maxPoints: number,
+/**
+ * Calculate grade from a raw percentage (0-100) using the grading key.
+ */
+export function calculateGradeFromPercentage(
+  percentage: number,
   keyConfig?: GradingKeyConfig
 ): { grade: string; label: string } | null {
-  if (!keyConfig?.cutoffs || keyConfig.cutoffs.length === 0 || maxPoints <= 0) {
+  if (!keyConfig?.cutoffs || keyConfig.cutoffs.length === 0) {
     return null;
   }
 
-  const percentage = (score / maxPoints) * 100;
   // Sort cutoffs descending by minPercentage
   const sorted = [...keyConfig.cutoffs].sort((a, b) => b.minPercentage - a.minPercentage);
 
@@ -62,6 +63,19 @@ export function calculateGrade(
 
   const fallback = sorted.at(-1);
   return fallback ? { grade: fallback.grade, label: fallback.label } : null;
+}
+
+export function calculateGrade(
+  score: number,
+  maxPoints: number,
+  keyConfig?: GradingKeyConfig
+): { grade: string; label: string } | null {
+  if (!keyConfig?.cutoffs || keyConfig.cutoffs.length === 0 || maxPoints <= 0) {
+    return null;
+  }
+
+  const percentage = (score / maxPoints) * 100;
+  return calculateGradeFromPercentage(percentage, keyConfig);
 }
 
 export interface GradeDetail {
@@ -132,4 +146,47 @@ export function calculateGradeDetail(
     nextHigher,
     nextLower,
   };
+}
+
+/**
+ * Grade distribution: counts how many submissions fall into each grade bracket.
+ */
+export interface GradeDistributionBucket {
+  grade: string;
+  label: string;
+  count: number;
+  minPercentage: number;
+}
+
+export function calculateGradeDistribution(
+  percentages: number[],
+  keyConfig?: GradingKeyConfig
+): GradeDistributionBucket[] {
+  if (!keyConfig?.cutoffs || keyConfig.cutoffs.length === 0) {
+    return [];
+  }
+
+  // Sort cutoffs ascending by minPercentage (worst grade first) so we can display 1..6
+  const sorted = [...keyConfig.cutoffs].sort((a, b) => b.minPercentage - a.minPercentage);
+
+  // Initialize buckets
+  const buckets = sorted.map((cutoff) => ({
+    grade: cutoff.grade,
+    label: cutoff.label,
+    count: 0,
+    minPercentage: cutoff.minPercentage,
+  }));
+
+  // Assign each percentage to a grade bucket
+  percentages.forEach((p) => {
+    const gradeInfo = calculateGradeFromPercentage(p, keyConfig);
+    if (gradeInfo) {
+      const bucket = buckets.find((b) => b.grade === gradeInfo.grade);
+      if (bucket) {
+        bucket.count++;
+      }
+    }
+  });
+
+  return buckets;
 }

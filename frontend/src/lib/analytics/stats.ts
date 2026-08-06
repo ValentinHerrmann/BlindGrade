@@ -12,6 +12,45 @@ export interface SummaryStats {
   histogram: { binStart: number; binEnd: number; count: number }[];
 }
 
+export interface PercentageEntry {
+  percentage: number;
+  gradedCount: number;
+  totalCount: number;
+}
+
+/**
+ * Calculate preliminary percentage for a submission based on graded exercises only.
+ * For example, if exercises have maxPoints {5,3,10,15} and scores are {4,1,null,null},
+ * the percentage is (4+1)/(5+3) = 62.5%
+ *
+ * @param exerciseMaxPoints - array of max points per exercise in order
+ * @param exerciseScores - array of actual scores (null/undefined = not graded)
+ * @returns percentage entry or null if no exercises are graded
+ */
+export function calculateSubmissionPercentage(
+  exerciseMaxPoints: number[],
+  exerciseScores: (number | null | undefined)[]
+): PercentageEntry | null {
+  let gradedSum = 0;
+  let gradedMaxSum = 0;
+  let gradedCount = 0;
+  const totalCount = exerciseMaxPoints.length;
+
+  for (let i = 0; i < exerciseMaxPoints.length; i++) {
+    const score = exerciseScores[i];
+    if (score !== null && score !== undefined) {
+      gradedSum += score;
+      gradedMaxSum += exerciseMaxPoints[i];
+      gradedCount++;
+    }
+  }
+
+  if (gradedCount === 0 || gradedMaxSum === 0) return null;
+
+  const percentage = (gradedSum / gradedMaxSum) * 100;
+  return { percentage, gradedCount, totalCount };
+}
+
 export function calculateSummaryStats(scores: number[]): SummaryStats | null {
   if (scores.length === 0) return null;
 
@@ -53,4 +92,30 @@ export function calculateSummaryStats(scores: number[]): SummaryStats | null {
     max,
     histogram,
   };
+}
+
+/**
+ * Build a percentage-based histogram (0-100%, fixed 10 bins of 10% each).
+ */
+export interface PercentageHistogramBin {
+  binStart: number;
+  binEnd: number;
+  count: number;
+}
+
+export function calculatePercentageHistogram(percentages: number[]): PercentageHistogramBin[] {
+  const bins: PercentageHistogramBin[] = Array.from({ length: 10 }).map((_, i) => ({
+    binStart: i * 10,
+    binEnd: (i + 1) * 10,
+    count: 0,
+  }));
+
+  percentages.forEach((p) => {
+    let binIdx = Math.floor(p / 10);
+    if (binIdx < 0) binIdx = 0;
+    if (binIdx >= 10) binIdx = 9;
+    bins[binIdx].count++;
+  });
+
+  return bins;
 }
