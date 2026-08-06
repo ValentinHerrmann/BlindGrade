@@ -1,6 +1,5 @@
 <script lang="ts">
   import { page } from '$app/stores';
-  export let params;
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
   import { afterNavigate } from '$app/navigation';
@@ -28,6 +27,8 @@
   import { exportGradesToCsv } from '$lib/analytics/csvExport';
   import { get } from 'svelte/store';
   import { db } from '$lib/db/db';
+  import { Chart, Svg, Axis, Bars } from 'layerchart';
+  import { scaleBand } from 'd3-scale';
 
   $: examId = $page.params.id || '';
 
@@ -47,6 +48,12 @@
   // Raw percentages array, used reactively to recalculate grade distribution when grading key changes
   let allPercentages: number[] = [];
 
+  // Chart dimensions (updated on resize)
+  let chartWidth = 700;
+
+  // Track whether data has been loaded to prevent rendering charts with empty data
+  let dataLoaded = false;
+
   $: if (browser && examId && $sessionStore.sessionKey) {
     loadStats(examId);
   }
@@ -60,6 +67,10 @@
   onMount(async () => {
     if (examId && $sessionStore.sessionKey) {
       await loadStats(examId);
+    }
+    // Set responsive width
+    if (browser) {
+      chartWidth = Math.min(700, window.innerWidth - 80);
     }
   });
 
@@ -119,6 +130,9 @@
     // Calculate percentage histogram
     percentageBins = calculatePercentageHistogram(percentages);
 
+    // Mark data as loaded
+    dataLoaded = true;
+
     // Calculate grade distribution based on exam's grading key
     gradeBuckets = calculateGradeDistribution(percentages, exam?.gradingKey);
 
@@ -146,7 +160,13 @@
 
   $: submissionsWithAnyGrade = percentageBins.reduce((sum, b) => sum + b.count, 0);
 
-  $: maxBinCount = percentageBins.length > 0 ? Math.max(...percentageBins.map((b) => b.count), 1) : 1;
+  // Prepare histogram data for Layerchart (filter out empty bins to prevent NaN errors)
+  $: histogramData = percentageBins
+    .filter((bin) => bin.count > 0)
+    .map((bin) => ({
+      label: `${bin.binStart}-${bin.binEnd}%`,
+      count: bin.count,
+    }));
 
   // Reactive: recalculate grade distribution whenever grading key or percentages change
   // Fall back to default linear_50 grading key if none is configured
@@ -154,7 +174,15 @@
     const effectiveKey = exam?.gradingKey || { preset: 'linear_50' as const, cutoffs: getPresetCutoffs('linear_50') };
     gradeBuckets = calculateGradeDistribution(allPercentages, effectiveKey);
   }
-  $: maxGradeCount = gradeBuckets.length > 0 ? Math.max(...gradeBuckets.map((b) => b.count), 1) : 1;
+
+  // Prepare grade data for Layerchart (filter out empty buckets)
+  $: gradeData = gradeBuckets
+    .filter((bucket) => bucket.count > 0)
+    .map((bucket) => ({
+      grade: String(bucket.grade),
+      label: bucket.label,
+      count: bucket.count,
+    }));
 
   async function confirmAndExport() {
     showConfirmModal = false;
@@ -169,6 +197,26 @@
     });
 
     await exportGradesToCsv(examId, exam?.title || 'Exam', rows, key);
+  }
+
+  // Chart scales (must be persistent instances, not created inline in template)
+  const histogramXScale = scaleBand();
+  const gradeYScale = scaleBand();
+
+  // Chart color constants
+  const barFill = '#0284c7';
+  const barHoverFill = '#38bdf8';
+  const tickColor = '#94a3b8';
+
+  // Hover handlers typed
+  function handleBarPointerEnter(e: PointerEvent) {
+    const bar = (e.currentTarget as Element).querySelector('rect, path');
+    if (bar) bar.setAttribute('fill', barHoverFill);
+  }
+
+  function handleBarPointerLeave(e: PointerEvent) {
+    const bar = (e.currentTarget as Element).querySelector('rect, path');
+    if (bar) bar.setAttribute('fill', barFill);
   }
 </script>
 
@@ -214,46 +262,105 @@
       </div>
     </div>
 
-    <!-- Percentage Histogram -->
+    <!-- Percentage Histogram using Layerchart -->
     <div class="histogram-section">
       <h3>📊 Prozentverteilung</h3>
-      <div class="bars">
-        {#each percentageBins as bin}
-          <div class="bar-col">
-            <span class="count">{bin.count}</span>
-            <div class="bar" style="height: {Math.round((bin.count / maxBinCount) * 160)}px"></div>
-            <span class="range">{bin.binStart}-{bin.binEnd}%</span>
-          </div>
-        {/each}
-      </div>
+      {#if dataLoaded && histogramData.length > 0}
+        <div class="chart-container histogram-container">
+          <Chart
+            data={histogramData}
+            x="label"
+            y="count"
+            xScale={histogramXScale}
+            yDomain={[0, Math.max(1, ...histogramData.map(d => d.count))]}
+            padding={{ top: 20, right: 20, bottom: 60, left: 50 }}
+            width={chartWidth}
+            height={250}
+          >
+            <Svg>
+              <Axis
+                placement="bottom"
+                tickLength={0}
+                tickLabelProps={{
+                  dy: 12,
+                  transform: 'rotate(-45)',
+                  fill: tickColor,
+                  fontSize: 11,
+                }}
+                rule={{ style: 'stroke: #64748b' }}
+              />
+              <Axis
+                placement="left"
+                tickLength={0}
+                tickLabelProps={{ fill: tickColor, fontSize: 11 }}
+                rule={{ style: 'stroke: #64748b' }}
+                grid={{ style: 'stroke: #334155' }}
+              />
+              <Bars
+                data={histogramData}
+                x="label"
+                y="count"
+                fill={barFill}
+                radius={4}
+                rounded="top"
+                stroke="none"
+                onpointerenter={handleBarPointerEnter}
+                onpointerleave={handleBarPointerLeave}
+              />
+            </Svg>
+          </Chart>
+        </div>
+      {/if}
     </div>
 
-  <!-- Grade Distribution Bar Diagram -->
-  {#if gradeBuckets.length > 0}
-    <div class="grade-distribution-section">
-      <h3>🎯 Notenverteilung</h3>
-      <p class="grading-key-label">
-        Bewertungsmaßstab: {exam?.gradingKey?.preset === 'linear_50' ? 'Linear (50%)' : exam?.gradingKey?.preset === 'linear_40' ? 'Linear (40%)' : exam?.gradingKey?.preset === 'even_split' ? 'Gleichmäßig' : exam?.gradingKey ? 'Benutzerdefiniert' : 'Standard (50%)'}
-      </p>
-        <div class="grade-bars">
-          {#each gradeBuckets as bucket}
-            <div class="grade-bar-row">
-              <div class="grade-label">
-                <span class="grade-number">{bucket.grade}</span>
-                <span class="grade-text">{bucket.label}</span>
-              </div>
-              <div class="grade-bar-track">
-                <div
-                  class="grade-bar-fill"
-                  style="width: {Math.max(bucket.count > 0 ? (bucket.count / maxGradeCount) * 100 : 0)}%"
-                ></div>
-              </div>
-              <span class="grade-count">{bucket.count}</span>
-            </div>
-          {/each}
+    <!-- Grade Distribution using Layerchart -->
+    {#if dataLoaded && gradeData.length > 0}
+      <div class="grade-distribution-section">
+        <h3>🎯 Notenverteilung</h3>
+        <p class="grading-key-label">
+          Bewertungsmaßstab: {exam?.gradingKey?.preset === 'linear_50' ? 'Linear (50%)' : exam?.gradingKey?.preset === 'linear_40' ? 'Linear (40%)' : exam?.gradingKey?.preset === 'even_split' ? 'Gleichmäßig' : exam?.gradingKey ? 'Benutzerdefiniert' : 'Standard (50%)'}
+        </p>
+        <div class="chart-container grade-container">
+          <Chart
+            data={gradeData}
+            y="grade"
+            x="count"
+            yScale={gradeYScale}
+            xDomain={[0, Math.max(1, ...gradeData.map(d => d.count))]}
+            padding={{ top: 10, right: 60, bottom: 10, left: 140 }}
+            width={chartWidth}
+            height={Math.max(200, gradeData.length * 50)}
+          >
+            <Svg>
+              <Axis
+                placement="left"
+                tickLength={0}
+                tickLabelProps={{ fill: '#38bdf8', fontSize: 16, fontWeight: 700 }}
+                rule={false}
+              />
+              <Axis
+                placement="bottom"
+                tickLength={0}
+                tickLabelProps={{ fill: tickColor, fontSize: 11 }}
+                rule={{ style: 'stroke: #64748b' }}
+                grid={{ style: 'stroke: #334155' }}
+              />
+              <Bars
+                data={gradeData}
+                y="grade"
+                x="count"
+                fill={barFill}
+                radius={4}
+                rounded="right"
+                stroke="none"
+                onpointerenter={handleBarPointerEnter}
+                onpointerleave={handleBarPointerLeave}
+              />
+            </Svg>
+          </Chart>
         </div>
       </div>
-  {/if}
+    {/if}
   {:else}
     <div class="empty-stats">
       <p>Noch keine Aufgaben korrigiert. Die Statistiken erscheinen hier, sobald du mit der Korrektur beginnst.</p>
@@ -337,7 +444,7 @@
   .stat-card .value { font-size: 1.75rem; font-weight: 700; color: #38bdf8; }
 
   .histogram-section {
-    background: #1e293b;
+    background: #0f172a;
     padding: 1.5rem;
     border-radius: 8px;
     margin-bottom: 2rem;
@@ -348,49 +455,23 @@
     color: #f8fafc;
   }
 
-  .bars {
-    display: flex;
-    justify-content: space-around;
-    align-items: flex-end;
-    height: 200px;
+  .chart-container {
     margin-top: 1rem;
-    padding: 0 0.5rem;
+    overflow: hidden;
+    position: relative;
   }
 
-  .bar-col {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.4rem;
-    flex: 1;
+   .histogram-container {
+    height: 290px;
   }
 
-  .bar-col .count {
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: #cbd5e1;
-  }
-
-  .bar {
-    width: 32px;
-    background: #0284c7;
-    border-radius: 4px 4px 0 0;
-    min-height: 3px;
-    transition: height 0.2s ease;
-  }
-
-  .bar-col:hover .bar {
-    background: #38bdf8;
-  }
-
-  .range {
-    font-size: 0.7rem;
-    color: #64748b;
+  .grade-container {
+    height: 350px;
   }
 
   /* Grade Distribution */
   .grade-distribution-section {
-    background: #1e293b;
+    background: #0f172a;
     padding: 1.5rem;
     border-radius: 8px;
     margin-bottom: 2rem;
@@ -405,64 +486,6 @@
     font-size: 0.8rem;
     color: #64748b;
     margin-bottom: 1rem;
-  }
-
-  .grade-bars {
-    display: flex;
-    flex-direction: column;
-    gap: 0.6rem;
-  }
-
-  .grade-bar-row {
-    display: grid;
-    grid-template-columns: 120px 1fr 40px;
-    align-items: center;
-    gap: 0.75rem;
-  }
-
-  .grade-label {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .grade-number {
-    font-size: 1.25rem;
-    font-weight: 700;
-    color: #38bdf8;
-    line-height: 1;
-  }
-
-  .grade-text {
-    font-size: 0.7rem;
-    color: #94a3b8;
-  }
-
-  .grade-bar-track {
-    width: 100%;
-    height: 24px;
-    background: #0f172a;
-    border-radius: 4px;
-    overflow: hidden;
-  }
-
-  .grade-bar-fill {
-    height: 100%;
-    background: linear-gradient(90deg, #0284c7, #38bdf8);
-    border-radius: 4px;
-    transition: width 0.3s ease;
-    min-width: 0;
-  }
-
-  .grade-bar-row:hover .grade-bar-fill {
-    background: linear-gradient(90deg, #0369a1, #7dd3fc);
-  }
-
-  .grade-count {
-    font-size: 0.95rem;
-    font-weight: 600;
-    color: #cbd5e1;
-    text-align: right;
   }
 
   .empty-stats {

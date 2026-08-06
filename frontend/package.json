@@ -27,6 +27,7 @@
     "dexie": "^4.0.0",
     "diff": "^9.0.0",
     "fflate": "^0.8.2",
+    "layerchart": "^1.0.13",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.1.200",
     "qrcode": "^1.5.3",
